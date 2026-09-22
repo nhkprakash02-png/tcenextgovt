@@ -1,0 +1,121 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #0B0B0B;
+  --panel: #111827;
+  --panel2: #161f2e;
+  --text: #FFFFFF;
+  --muted: #94A3B8;
+  --border: rgba(217, 119, 6, 0.35);
+}
+html.light {
+  --bg: #FBF9F3;
+  --panel: #FFFFFF;
+  --panel2: #F6F1E4;
+  --text: #111111;
+  --muted: #57534E;
+  --border: rgba(217, 119, 6, 0.5);
+}
+* { scrollbar-width: thin; scrollbar-color: #D97706 transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: linear-gradient(180deg, #F59E0B, #D97706); border-radius: 8px; }
+/* Fixes the mobile/PWA "zoomed-out with blank space" bug: if ANY element on the page ever
+   overflows the viewport horizontally (a long unbroken word, an oversized absolutely-positioned
+   element, etc.), mobile browsers and installed-PWA shells respond by zooming the whole page out
+   to fit that width — leaving the blank margins reported.
+   IMPORTANT: this is scoped to `body` ONLY (not html, not #root). Setting overflow-x on an
+   element with no explicit overflow-y forces the browser to compute overflow-y as `auto` on
+   that same element (a CSS spec quirk) — applying this to html AND body AND #root at once
+   silently created three separate nested scroll containers instead of the one natural page
+   scroller, which is what broke the header's `position: sticky` (sticky positioning is
+   calculated relative to the nearest scrolling ancestor, and there were suddenly three
+   candidates instead of one). Scoping to `body` alone keeps `html` as the single, natural page
+   scroller — restoring correct sticky behavior — while still guarding against horizontal
+   overflow, since body wraps essentially all rendered content anyway. */
+body { overflow-x: hidden; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', sans-serif;
+  transition: background .3s ease, color .3s ease;
+}
+.bn { font-family: 'Noto Sans Bengali', 'Inter', sans-serif; }
+.font-display { font-family: 'Poppins', 'Inter', sans-serif; }
+.gold-text {
+  background: linear-gradient(135deg, #F59E0B, #D97706, #FBBF24);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.gold-grad { background: linear-gradient(135deg, #F59E0B, #D97706, #FBBF24); }
+.card { background: var(--panel); border: 1px solid var(--border); position: relative; }
+.card2 { background: var(--panel2); }
+
+.glow-border {
+  border: 1px solid var(--border); border-top: 1px solid rgba(251, 191, 36, 0.65); border-radius: 1rem; position: relative;
+  box-shadow: 0 1px 0 0 rgba(251, 191, 36, 0.25) inset, 0 2px 6px -2px rgba(0, 0, 0, 0.55), 0 14px 28px -14px rgba(0, 0, 0, 0.65), 0 10px 30px -14px rgba(245, 158, 11, 0.22);
+  transform: translateY(0) translateZ(0);
+  transition: transform .28s cubic-bezier(.2,.8,.2,1), box-shadow .28s cubic-bezier(.2,.8,.2,1), border-color .28s ease;
+  will-change: transform, box-shadow;
+}
+.glow-border::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0) 40%); opacity: .6;
+}
+.glow-border:hover {
+  transform: translateY(-4px) translateZ(0); border-color: rgba(245, 158, 11, 0.7);
+  box-shadow: 0 1px 0 0 rgba(251,191,36,0.45) inset, 0 4px 10px -2px rgba(0,0,0,0.6), 0 26px 48px -18px rgba(0,0,0,0.7), 0 18px 46px -12px rgba(245,158,11,0.4);
+}
+.glow-border:active {
+  transform: translateY(-1px) scale(0.98) translateZ(0);
+  box-shadow: 0 1px 0 0 rgba(251,191,36,0.3) inset, 0 1px 4px -1px rgba(0,0,0,0.6), 0 6px 14px -8px rgba(0,0,0,0.6), 0 4px 14px -6px rgba(245,158,11,0.3);
+  transition: transform .08s ease, box-shadow .08s ease;
+}
+button.glow-border, a.glow-border { cursor: pointer; }
+.muted { color: var(--muted); }
+.tab-active { background: linear-gradient(135deg, #F59E0B, #D97706); color: #0B0B0B; font-weight: 700; }
+.hide-scrollbar::-webkit-scrollbar { display: none; }
+.hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+@keyframes slideFade { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+.menu-item-anim { animation: slideFade .32s ease both; }
+@keyframes tickerMove { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }
+.ticker-track { display: inline-block; white-space: nowrap; animation: tickerMove 32s linear infinite; }
+.watermark-wrap { position: relative; overflow: hidden; }
+.watermark-wrap::before {
+  content: ""; position: absolute; inset: 0; margin: auto; width: 60%; height: 60%; max-width: 520px; max-height: 520px;
+  background-image: url('/logo.png'), none; background-repeat: no-repeat; background-position: center; background-size: contain;
+  opacity: 0.05; pointer-events: none; z-index: 0;
+}
+.watermark-wrap.wm-fallback::before { background-image: none; }
+.watermark-wrap.wm-fallback::after {
+  content: "TCE"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 8rem; font-weight: 800; color: rgba(255,255,255,0.045); letter-spacing: 6px; pointer-events: none;
+  border: 6px solid rgba(255,255,255,0.035); border-radius: 50%; margin: auto; width: 60%; height: 60%; z-index: 0;
+}
+html.light .watermark-wrap.wm-fallback::after { color: rgba(0,0,0,0.04); border-color: rgba(0,0,0,0.035); }
+.badge { font-size: .65rem; padding: 2px 8px; border-radius: 999px; font-weight: 700; letter-spacing: .03em; }
+.fade-in { animation: fadeIn .35s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.modal-backdrop { background: rgba(0,0,0,0.72); backdrop-filter: blur(3px); }
+input[type=text], input[type=email], input[type=tel], input[type=password], input[type=number], input[type=file], input[type=date], textarea, select {
+  background: var(--panel2); border: 1px solid rgba(148,163,184,0.25); color: var(--text);
+}
+input:focus, textarea:focus, select:focus { outline: none; border-color: #F59E0B; box-shadow: 0 0 0 3px rgba(245,158,11,0.15); }
+.palette-btn { width: 40px; height: 40px; border-radius: 8px; font-size: .8rem; font-weight: 700; display: flex; align-items: center; justify-content: center; position: relative; }
+::placeholder { color: #6b7280; }
+.btn-gold {
+  background: linear-gradient(135deg, #F59E0B, #D97706); color: #0B0B0B; font-weight: 700;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.35) inset, 0 6px 16px -6px rgba(245,158,11,0.55), 0 2px 4px -1px rgba(0,0,0,0.4);
+  transform: translateY(0); transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
+}
+.btn-gold:hover { filter: brightness(1.08); transform: translateY(-2px); box-shadow: 0 1px 0 rgba(255,255,255,0.4) inset, 0 12px 24px -8px rgba(245,158,11,0.6), 0 4px 8px -2px rgba(0,0,0,0.45); }
+.btn-gold:active { transform: translateY(0) scale(0.97); box-shadow: 0 1px 0 rgba(255,255,255,0.2) inset, 0 3px 8px -4px rgba(245,158,11,0.5); }
+.btn-ghost { border: 1px solid var(--border); color: var(--text); transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+.btn-ghost:hover { transform: translateY(-2px); border-color: rgba(245,158,11,0.6); box-shadow: 0 10px 20px -10px rgba(245,158,11,0.35); }
+.btn-ghost:active { transform: translateY(0) scale(0.97); }
+.no-tap-highlight { -webkit-tap-highlight-color: transparent; }
+@media print {
+  body * { visibility: hidden; }
+  #printArea, #printArea * { visibility: visible; }
+  #printArea { position: absolute; left: 0; top: 0; width: 100%; }
+}
