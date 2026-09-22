@@ -67,7 +67,15 @@ function authErrorMessage(err) {
       return "Google sign-in failed: this website's domain is not yet added to the Authorized Domains list in Firebase Authentication settings. Please contact the site admin.";
     case 'auth/network-request-failed':
       return 'Network error. Please check your connection and try again.';
+    case 'auth/operation-not-allowed':
+      return 'Google sign-in is not enabled for this app yet. Please contact the site admin to enable it in Firebase.';
+    case 'auth/account-exists-with-different-credential':
+      return 'An account already exists for this email using a different sign-in method. Try logging in with email/password instead.';
     default:
+      // Logged to the console (not shown to the user) so whoever is debugging a "Something
+      // went wrong" report can open DevTools and see the real Firebase error code, instead of
+      // guessing from a screenshot of the generic message below.
+      if (code) console.error('Unmapped Firebase Auth error code:', code, err);
       return 'Something went wrong. Please try again.';
   }
 }
