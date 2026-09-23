@@ -73,12 +73,17 @@ function authErrorMessage(err) {
       return 'Google sign-in is not enabled for this app yet. Please contact the site admin to enable it in Firebase.';
     case 'auth/account-exists-with-different-credential':
       return 'An account already exists for this email using a different sign-in method. Try logging in with email/password instead.';
+    case 'auth/web-storage-unsupported':
+      return "Google sign-in needs cookies/site data enabled for this site. Please check your browser's privacy settings (e.g. \"Block third-party cookies\" or \"Site data\" being off) and try again.";
+    case 'auth/operation-not-supported-in-this-environment':
+      return 'Google sign-in is not supported in this browser/app environment. Please try opening the site directly in Chrome or Safari (not an in-app browser like Instagram/Facebook/WhatsApp) and try again.';
     default:
-      // Logged to the console (not shown to the user) so whoever is debugging a "Something
-      // went wrong" report can open DevTools and see the real Firebase error code, instead of
-      // guessing from a screenshot of the generic message below.
+      // TEMPORARY DEBUG AID — remove the "(Error code: ...)" suffix once Google sign-in is
+      // confirmed working. This intentionally puts the raw Firebase error code directly in the
+      // on-screen message (in addition to the console.error below) so it can be read straight
+      // off a phone screenshot, with no DevTools/remote-debugging access needed to diagnose it.
       if (code) console.error('Unmapped Firebase Auth error code:', code, err);
-      return 'Something went wrong. Please try again.';
+      return `Something went wrong. Please try again. ${code ? `(Error code: ${code})` : ''}`.trim();
   }
 }
 
