@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import {
-  signInWithPopup,
+  signInWithRedirect,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
@@ -22,9 +22,11 @@ import { fbAuth, googleProvider, DEMO_MODE } from '../firebase';
 // (via signInWithRedirect in the old version of this file).
 //
 // This rewrite switches email/password to REAL Firebase Auth (signInWithEmailAndPassword /
-// createUserWithEmailAndPassword / sendPasswordResetEmail), and switches Google sign-in from
-// signInWithRedirect to signInWithPopup, as requested. Nothing in AppContext.jsx, Modal.jsx, or
-// any Firestore document shape was touched — only this file changed.
+// createUserWithEmailAndPassword / sendPasswordResetEmail). Google sign-in briefly moved from
+// signInWithRedirect to signInWithPopup, then moved back to signInWithRedirect after popups
+// proved unreliable on mobile Chrome in real testing — see the comment on googleSignIn below.
+// Nothing in AppContext.jsx, Modal.jsx, or any Firestore document shape was touched — only this
+// file changed.
 //
 // MIGRATION FOR EXISTING STUDENTS (this is the part that keeps old accounts working):
 // Every student who signed up before this change has a Firestore record but NO Firebase Auth
@@ -180,7 +182,7 @@ function ForgotPasswordForm({ onBack }) {
 }
 
 export default function AuthModal() {
-  const { user, DB } = useApp();
+  const { user, DB, setPendingSignupProfile } = useApp();
   const finishLogin = useFinishLogin();
   const [tab, setLocalTab] = useState('login');       // 'login' | 'signup'
   const [view, setView] = useState('form');           // 'form' | 'forgotPassword'
@@ -251,39 +253,49 @@ export default function AuthModal() {
     if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
     if (password !== confirm) { setError('Passwords do not match.'); return; }
     setError(''); setLoading('signup');
+    // FIX: stashed BEFORE createUserWithEmailAndPassword starts, so AppContext.jsx's
+    // onAuthStateChanged listener has the name/phone ready the instant it detects this brand
+    // new Firebase user. Previously this function called finishLogin() itself right after
+    // signup succeeded — but AppContext's own onAuthStateChanged listener ALSO fires for a
+    // brand-new signup (Firebase notifies every listener on any auth state change, not just
+    // Google's), and since it had no way to know a signup — as opposed to a first-time Google
+    // sign-in — had just happened, it would briefly open GoogleRegisterModal by mistake (name
+    // showing as "Student", asking for a password again) before this function's own
+    // finishLogin() call closed it a beat later. setPendingSignupProfile lets AppContext tell
+    // the two cases apart and create the Firestore profile directly, with no modal detour and
+    // no race between two different pieces of code both trying to create the same student.
+    setPendingSignupProfile({ name, phone });
     try {
       await createUserWithEmailAndPassword(fbAuth, email, password);
-      finishLogin(email, { name, phone });
+      // No further action here — AppContext.jsx's onAuthStateChanged listener creates the
+      // Firestore profile using the pending name/phone above and logs the student in.
     } catch (err) {
+      setPendingSignupProfile(null); // signup failed — don't let this leak into a later unrelated sign-in
       setError(authErrorMessage(err));
     } finally {
       setLoading(null);
     }
   };
 
-  // Switched from signInWithRedirect to signInWithPopup, as requested. Actually logging the
-  // user into the app (matching an existing student, or opening GoogleRegisterModal for a new
-  // one) is still handled entirely by AppContext.jsx's existing onAuthStateChanged effect —
-  // that logic is untouched and fires the same way for a popup sign-in as it did for a redirect
-  // one. This function only manages this modal's OWN loading state and popup-specific errors.
-  const googleSignIn = async () => {
+  // REVERTED to signInWithRedirect (was signInWithPopup). This was originally built with
+  // signInWithPopup per an explicit request, but popups proved unreliable on mobile Chrome in
+  // real-world testing on this exact deployment — consistent with the ORIGINAL codebase's own
+  // comment, which chose redirect for precisely this reason (popups are frequently blocked or
+  // behave inconsistently on mobile browsers and in in-app webviews). Actually completing the
+  // login (matching an existing student, or opening GoogleRegisterModal for a new one) is
+  // handled entirely by AppContext.jsx's existing getRedirectResult()/onAuthStateChanged
+  // effects — those were already built for redirect and are untouched by this file.
+  //
+  // Because redirect navigates the whole browser away and back, there is no "after" callback to
+  // run here on success — the loading state harmlessly stays true until the page navigates away.
+  // Only a same-tick failure (e.g. domain not authorized) reaches the catch block below.
+  const googleSignIn = () => {
     if (DEMO_MODE || !fbAuth) return;
     setError(''); setLoading('google');
-    try {
-      await signInWithPopup(fbAuth, googleProvider);
-      // No further action here on success — AppContext's listener takes it from there, and
-      // will either close this modal's need to exist (by logging the user in, which makes the
-      // `if (user) return <AccountModal />;` check above take over on next render) or replace
-      // it with GoogleRegisterModal for a brand-new Google user.
-    } catch (err) {
-      if (err?.code === 'auth/popup-closed-by-user' || err?.code === 'auth/cancelled-popup-request') {
-        // User closed the popup themselves — not a real error, say nothing.
-      } else {
-        setError(authErrorMessage(err));
-      }
-    } finally {
+    signInWithRedirect(fbAuth, googleProvider).catch((err) => {
+      setError(authErrorMessage(err));
       setLoading(null);
-    }
+    });
   };
 
   const inputCls = 'w-full rounded-lg px-3 py-2.5 text-sm';
@@ -340,18 +352,24 @@ export default function AuthModal() {
 export function GoogleRegisterModal({ profile }) {
   const { DB, saveDB, setUser, closeModal, setTab } = useApp();
   const [phone, setPhone] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
+  // FIX: no longer asks for a password. A Google-authenticated account only ever signs back in
+  // via "Continue with Google" — Firebase Auth already handles their credential entirely, so a
+  // separate app password would never be used for anything and was just extra friction (and an
+  // extra plaintext-adjacent field) for no functional benefit. Matches how the sibling tce-neet
+  // project already does this.
   const complete = () => {
     const name = (profile.name || '').trim();
     const email = profile.email || '';
-    if (!name || !phone || !password || !confirm) { setError('Please fill in all fields.'); return; }
-    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
-    if (password !== confirm) { setError('Passwords do not match.'); return; }
+    if (!phone.trim()) { setError('Please enter your phone number.'); return; }
     if (DB.students.some((s) => (s.email || '').toLowerCase() === email.toLowerCase())) { setError('An account with this email already exists. Please login instead.'); return; }
-    const student = { id: uid('st'), name, email, phone, password, photoURL: profile.photoURL || '', address: '', joinDate: new Date().toISOString().slice(0, 10), registeredAt: new Date().toISOString(), paymentStatus: 'Not Enrolled', batch: '—', pendingReview: true };
+    setSubmitting(true);
+    // FIX: now stores the Firebase uid on the new record too, so future sign-ins for this
+    // student match on that authoritative id first (see AppContext.jsx's onAuthStateChanged),
+    // rather than only on email/phone.
+    const student = { id: uid('st'), uid: profile.uid, name, email, phone: phone.trim(), photoURL: profile.photoURL || '', address: '', joinDate: new Date().toISOString().slice(0, 10), registeredAt: new Date().toISOString(), paymentStatus: 'Not Enrolled', batch: '—', pendingReview: true };
     saveDB((prev) => ({ ...prev, students: [...prev.students, student] }));
     setUser(student); closeModal(); setTab('dashboard');
   };
@@ -359,15 +377,15 @@ export function GoogleRegisterModal({ profile }) {
   const inputCls = 'w-full rounded-lg px-3 py-2.5 text-sm';
   return (
     <Modal title="Complete Your Profile">
-      <p className="text-xs muted mb-4">You're signed in with Google — just a few more details to finish setting up your account.</p>
+      <p className="text-xs muted mb-4">You're signed in with Google — just one more detail to finish setting up your account.</p>
       <div className="space-y-3">
         <input type="text" defaultValue={profile.name || ''} placeholder="Full Name" className={inputCls} disabled />
         <input type="email" defaultValue={profile.email || ''} readOnly placeholder="Email" className={`${inputCls} opacity-70 cursor-not-allowed`} />
-        <input type="tel" placeholder="Phone Number" value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} />
-        <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputCls} />
-        <input type="password" placeholder="Confirm Password" value={confirm} onChange={(e) => setConfirm(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && complete()} className={inputCls} />
+        <input type="tel" placeholder="Phone Number" value={phone} onChange={(e) => setPhone(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && complete()} className={inputCls} />
         {error && <p className="text-xs text-red-400">{error}</p>}
-        <button onClick={complete} className="w-full btn-gold rounded-lg py-2.5 text-sm font-bold">Complete Registration</button>
+        <button onClick={complete} disabled={submitting} className="w-full btn-gold rounded-lg py-2.5 text-sm font-bold disabled:opacity-60">
+          {submitting ? 'Finishing up…' : 'Complete Registration'}
+        </button>
       </div>
     </Modal>
   );
