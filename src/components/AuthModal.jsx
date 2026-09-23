@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import {
-  signInWithRedirect,
+  signInWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
@@ -22,9 +22,9 @@ import { fbAuth, googleProvider, DEMO_MODE } from '../firebase';
 // (via signInWithRedirect in the old version of this file).
 //
 // This rewrite switches email/password to REAL Firebase Auth (signInWithEmailAndPassword /
-// createUserWithEmailAndPassword / sendPasswordResetEmail). Google sign-in briefly moved from
-// signInWithRedirect to signInWithPopup, then moved back to signInWithRedirect after popups
-// proved unreliable on mobile Chrome in real testing — see the comment on googleSignIn below.
+// createUserWithEmailAndPassword / sendPasswordResetEmail). Google sign-in went popup → redirect
+// → popup again over the course of debugging a real deployment — see the detailed comment on
+// googleSignIn below for why it landed back on popup.
 // Nothing in AppContext.jsx, Modal.jsx, or any Firestore document shape was touched — only this
 // file changed.
 //
@@ -282,25 +282,45 @@ export default function AuthModal() {
     }
   };
 
-  // REVERTED to signInWithRedirect (was signInWithPopup). This was originally built with
-  // signInWithPopup per an explicit request, but popups proved unreliable on mobile Chrome in
-  // real-world testing on this exact deployment — consistent with the ORIGINAL codebase's own
-  // comment, which chose redirect for precisely this reason (popups are frequently blocked or
-  // behave inconsistently on mobile browsers and in in-app webviews). Actually completing the
-  // login (matching an existing student, or opening GoogleRegisterModal for a new one) is
-  // handled entirely by AppContext.jsx's existing getRedirectResult()/onAuthStateChanged
-  // effects — those were already built for redirect and are untouched by this file.
+  // REVERTED AGAIN, this time to signInWithPopup (was signInWithRedirect). Redirect was chosen
+  // earlier in this project's life because popup appeared unreliable — but that was traced back
+  // to two separate infrastructure problems (the API key's HTTP-referrer restriction blocking
+  // this domain, and the domain missing from Firebase's Authorized domains list), NOT to popups
+  // themselves. Once those were fixed, redirect surfaced a DIFFERENT, harder problem: it relies
+  // on Firebase's authDomain (tce-nahata.firebaseapp.com — a different domain from the app
+  // itself) acting as a relay, which needs cross-site browser storage to hand the completed
+  // sign-in back to the app. Modern mobile Chrome increasingly blocks exactly that kind of
+  // cross-site storage sharing by default, which silently breaks the redirect flow: Google
+  // approves the sign-in, the relay page flashes by, but the result never reaches the app, and
+  // the page just reloads as if nothing happened.
   //
-  // Because redirect navigates the whole browser away and back, there is no "after" callback to
-  // run here on success — the loading state harmlessly stays true until the page navigates away.
-  // Only a same-tick failure (e.g. domain not authorized) reaches the catch block below.
-  const googleSignIn = () => {
+  // signInWithPopup avoids this entirely — the popup communicates back to this page directly via
+  // window messaging, not via that storage relay, so it isn't subject to the same restriction.
+  // Actually completing the login (matching an existing student, or opening GoogleRegisterModal
+  // for a new one) is still handled entirely by AppContext.jsx's existing onAuthStateChanged
+  // effect, unchanged — it reacts the same way regardless of which method triggered it.
+  //
+  // The real, fully bulletproof permanent fix — immune to any browser's popup or storage
+  // policies — is configuring a custom Firebase Auth domain on the same site as the app itself
+  // (e.g. auth.tcenahata.in), which turns the redirect relay into a same-site hop instead of a
+  // cross-site one. That requires Firebase Hosting + DNS changes outside this codebase; popup is
+  // the pragmatic fix available purely at the code level.
+  const googleSignIn = async () => {
     if (DEMO_MODE || !fbAuth) return;
     setError(''); setLoading('google');
-    signInWithRedirect(fbAuth, googleProvider).catch((err) => {
-      setError(authErrorMessage(err));
+    try {
+      await signInWithPopup(fbAuth, googleProvider);
+      // No further action here on success — AppContext's onAuthStateChanged listener takes it
+      // from there, exactly as it does for the redirect flow.
+    } catch (err) {
+      if (err?.code === 'auth/popup-closed-by-user' || err?.code === 'auth/cancelled-popup-request') {
+        // User closed the popup themselves — not a real error, say nothing.
+      } else {
+        setError(authErrorMessage(err));
+      }
+    } finally {
       setLoading(null);
-    });
+    }
   };
 
   const inputCls = 'w-full rounded-lg px-3 py-2.5 text-sm';
