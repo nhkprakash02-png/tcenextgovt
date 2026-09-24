@@ -21,7 +21,7 @@
 //     hydration mismatch. See the `hydrated` flag below for how persistence is gated on it.
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { getRedirectResult, onAuthStateChanged } from 'firebase/auth';
+import { getRedirectResult, onAuthStateChanged, signOut } from 'firebase/auth';
 import { loadDB, saveDB as persistDB, attachDbRealtimeListeners, attachSubmissionsRealtimeListener, writeSubmission, loadBanners } from '../lib/db';
 import { emptyDB } from '../lib/seedData';
 import { fbAuth } from '../firebase';
@@ -142,13 +142,63 @@ export function AppProvider({ children }) {
   // document (writeSubmission), never the whole submissions collection — see the fix note on
   // writeSubmission in db.js. The local state update here is optimistic (immediate UI update);
   // the realtime listener above will reconcile it with the server's copy shortly after.
+  // FIX: previously this was fire-and-forget — a single writeSubmission() attempt, and on
+  // failure, nothing but a browser alert(). If that write failed for ANY reason (a momentary
+  // network drop, which is entirely plausible when several students submit around the same
+  // moment at the end of a timed exam), the result was gone permanently: not in Firestore, so
+  // invisible to the admin analysis panel, the per-test leaderboard, and everyone else's view —
+  // even though the student's OWN browser had already shown them their result locally.
+  //
+  // Now: (1) retries the write a few times with a short backoff before giving up on the spot,
+  // since most network blips resolve within seconds; (2) if it still fails, queues the
+  // submission in localStorage instead of discarding it, and (3) a separate effect below
+  // attempts to flush that queue on every app load (and whenever the browser regains a network
+  // connection), so a result queued today because of a bad connection gets written the next
+  // time this student's browser is online — without them needing to do anything.
+  const PENDING_SUBMISSIONS_KEY = 'tce_pending_submissions';
+  const readPendingSubmissions = () => { try { return JSON.parse(localStorage.getItem(PENDING_SUBMISSIONS_KEY) || '[]'); } catch (e) { return []; } };
+  const writePendingSubmissions = (list) => { try { localStorage.setItem(PENDING_SUBMISSIONS_KEY, JSON.stringify(list)); } catch (e) { /* ignore */ } };
+  const queueSubmissionLocally = (sub) => {
+    const pending = readPendingSubmissions();
+    if (!pending.some((p) => p.id === sub.id)) writePendingSubmissions([...pending, sub]);
+  };
+
   const addSubmission = useCallback((sub) => {
     setDB((prev) => ({ ...prev, submissions: [...prev.submissions, sub] }));
-    writeSubmission(sub).catch((err) => {
-      console.error('Failed to save submission:', err);
-      alert('⚠ Could not sync this result to the cloud database. Please check your internet connection — your local result is still visible, but may not be saved permanently.');
-    });
+    const RETRY_DELAYS_MS = [1000, 3000, 7000]; // a few quick retries before falling back to the local queue
+    const attempt = (retriesLeft) => {
+      writeSubmission(sub).catch((err) => {
+        if (retriesLeft > 0) {
+          const delay = RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - retriesLeft] || 7000;
+          setTimeout(() => attempt(retriesLeft - 1), delay);
+          return;
+        }
+        console.error('Failed to save submission after retries — queued locally for later:', err);
+        queueSubmissionLocally(sub);
+        alert("⚠ Your result couldn't be saved to the cloud right now due to a connection issue. It's safely stored on this device and will be saved automatically the next time you open this site with a working connection — please don't clear your browser data before then.");
+      });
+    };
+    attempt(RETRY_DELAYS_MS.length);
   }, []);
+
+  // Flushes any submissions that got stuck in the local queue on a PREVIOUS visit (e.g. this
+  // student's connection dropped mid-exam last time and they closed the tab before it retried
+  // successfully). Runs once DB has loaded, and again whenever the browser regains connectivity.
+  useEffect(() => {
+    if (dbLoading) return;
+    const flush = () => {
+      const pending = readPendingSubmissions();
+      if (!pending.length) return;
+      pending.forEach((sub) => {
+        writeSubmission(sub)
+          .then(() => writePendingSubmissions(readPendingSubmissions().filter((p) => p.id !== sub.id)))
+          .catch((err) => console.warn('Still unable to flush a queued submission:', err));
+      });
+    };
+    flush();
+    window.addEventListener('online', flush);
+    return () => window.removeEventListener('online', flush);
+  }, [dbLoading]);
 
   // Writing the theme back to localStorage is gated on `hydrated` so the default 'dark' used
   // for the server render can never clobber a stored 'light' preference in the split second
@@ -188,8 +238,18 @@ export function AppProvider({ children }) {
   // logout now clears both, guaranteeing a truly clean slate for whoever signs in next on this
   // browser. Also clears any exam-resume progress so a new account never sees a stale
   // "Resume Previous Attempt" prompt belonging to someone else.
+  // FIX: this previously only cleared the app's own `user` state — it never called Firebase's
+  // own signOut(). That meant the browser's underlying Firebase Auth session stayed alive after
+  // "logging out," so a student who logged out and then clicked "Continue with Google" again
+  // with the SAME account was, from Firebase's point of view, already signed in: no real auth
+  // state change occurred, so onAuthStateChanged never fired again, and this app's `user` never
+  // got re-populated from their existing Firestore record. From the outside this looked like
+  // "logging in with the same Google account a second time just doesn't work." Calling
+  // signOut(fbAuth) here makes logout a real state transition, so the next sign-in reliably
+  // fires onAuthStateChanged and correctly reconnects them to their existing account and data.
   const logout = useCallback(() => {
     if (user) { try { localStorage.removeItem('tce_exam_resume_' + user.id); } catch (e) { /* ignore */ } }
+    if (fbAuth) signOut(fbAuth).catch((e) => console.warn('Firebase sign-out error', e));
     setUser(null);
     setAdmin(false);
   }, [user, setUser, setAdmin]);
