@@ -185,7 +185,20 @@ export async function loadDB() {
     }
     const seeded = seedDB(); // used only to backfill any keys/docs that don't exist yet
     const assembled = {};
-    await Promise.all(DB_KEYS.map(async (key) => { assembled[key] = await readKeyValue(key, seeded[key]); }));
+    // FIX: previously a single failed key here (e.g. a permission-denied read on a key that
+    // requires sign-in) rejected this entire Promise.all — and loadDB()'s outer catch then
+    // replaced EVERY key's real data with placeholder seed content, for every visitor affected,
+    // not just the one restricted key. Each key's read is now isolated: a failure on one key
+    // falls back to a safe default for just that key, while every other key still loads
+    // normally.
+    await Promise.all(DB_KEYS.map(async (key) => {
+      try {
+        assembled[key] = await readKeyValue(key, seeded[key]);
+      } catch (err) {
+        console.warn(`Could not read "${key}" (likely requires sign-in) — using a safe fallback for this key only.`, err);
+        assembled[key] = seeded[key];
+      }
+    }));
     let submissions = await loadAllSubmissions();
     const migrated = await migrateLegacySubmissionsIfNeeded(submissions.map((s) => s.id));
     if (migrated.length) submissions = submissions.concat(migrated);
