@@ -8,7 +8,7 @@ import Home from '../views/Home';
 // appear too, exactly as before). The one difference is that Next correctly serves these with
 // an HTTP 404 status instead of a 200, which is better for SEO.
 export const metadata = {
-  title: 'TCE - The Competitive Edge | Online Mock Test & Coaching Portal',
+  title: 'TCE Nahata - The Competitive Edge | Mock Tests & Coaching',
 };
 
 export default function NotFound() {

@@ -11,8 +11,8 @@ import { AppProvider } from '../context/AppContext';
 import AppShell from '../components/AppShell';
 
 const SITE = 'https://tcenahata.in';
-const TITLE = 'TCE - The Competitive Edge | Online Mock Test & Coaching Portal';
-const DESCRIPTION = 'Join TCE Nahata - The Competitive Edge. Premier coaching institute in Nahata for WBP, KP SI, SSC GD, Railway & all competitive government exams. Start today!';
+const TITLE = 'TCE Nahata - The Competitive Edge | Mock Tests & Coaching';
+const DESCRIPTION = 'TCE Nahata coaching for WBP, KP SI, SSC GD & Railway (RRB) exams in North 24 Parganas, West Bengal. Free mock tests, PYQs, quizzes & study materials.';
 
 export const metadata = {
   metadataBase: new URL(SITE),
@@ -28,7 +28,12 @@ export const metadata = {
     url: SITE + '/',
     title: TITLE,
     description: DESCRIPTION,
-    images: [{ url: '/seo-banner.png', width: 1200, height: 630 }],
+    // FIX: this previously declared 1200x630, but public/seo-banner.png is actually 647x423 —
+    // a mismatch between declared and real dimensions can cause WhatsApp/Facebook to crop the
+    // preview oddly or fall back to no image at all. Corrected to the file's real size. For the
+    // sharpest possible preview, replacing this file with a proper 1200x630 image would still
+    // be worth doing later, but this fix alone makes the current file behave correctly.
+    images: [{ url: '/seo-banner.png', width: 647, height: 423 }],
   },
   twitter: {
     card: 'summary_large_image',
