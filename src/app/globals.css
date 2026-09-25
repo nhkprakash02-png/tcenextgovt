@@ -114,6 +114,15 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: #F59E0B
 .btn-ghost:hover { transform: translateY(-2px); border-color: rgba(245,158,11,0.6); box-shadow: 0 10px 20px -10px rgba(245,158,11,0.35); }
 .btn-ghost:active { transform: translateY(0) scale(0.97); }
 .no-tap-highlight { -webkit-tap-highlight-color: transparent; }
+
+/* FIX: buttons/links/nav tabs requiring multiple taps to register, or occasionally scrolling
+   the page instead of navigating, especially on tablets. With no touch-action set, the browser
+   has to wait after every touch to decide whether it's the start of a scroll or a real tap —
+   and any small finger movement during that window (easy on a larger tablet screen, or if the
+   page hasn't fully settled from a previous scroll) gets classified as a scroll instead of a
+   click, silently swallowing the tap. touch-action: manipulation tells the browser to treat
+   touches on these elements as an immediate tap, skipping that ambiguous wait entirely. */
+button, a, [role="button"] { touch-action: manipulation; }
 @media print {
   body * { visibility: hidden; }
   #printArea, #printArea * { visibility: visible; }
