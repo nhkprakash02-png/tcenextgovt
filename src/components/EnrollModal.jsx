@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Smartphone, MessageCircle, Loader2, CreditCard } from 'lucide-react';
 import Modal from './Modal';
 import { useApp } from '../context/AppContext';
@@ -15,6 +15,20 @@ export default function EnrollModal({ context, batchId }) {
   const [payLoading, setPayLoading] = useState(false);
   const [payError, setPayError] = useState('');
   const [payDone, setPayDone] = useState(false);
+
+  // FIX: the Razorpay Checkout script was previously loaded globally in layout.js, on every
+  // single page — including pages that have nothing to do with payments, like Mock Tests. It's
+  // now loaded here instead, only when this modal actually mounts (i.e. only when someone opens
+  // Enroll), and only once (skipped entirely if it's already present from an earlier open in
+  // this same session).
+  useEffect(() => {
+    if (typeof window === 'undefined' || window.Razorpay || document.getElementById('razorpay-checkout-js')) return;
+    const script = document.createElement('script');
+    script.id = 'razorpay-checkout-js';
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    document.body.appendChild(script);
+  }, []);
 
   const batch = batchId ? DB.batches.find((b) => b.id === batchId) : DB.batches[0];
   const amount = batch ? batch.price : 300;
