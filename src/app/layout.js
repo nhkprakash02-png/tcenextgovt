@@ -6,7 +6,6 @@
 // because they are what makes the site feel instant on first paint — that has to be real HTML
 // the browser sees before any JS runs, which is exactly what this server component emits.
 import React from 'react';
-import Script from 'next/script';
 import './globals.css';
 import { AppProvider } from '../context/AppContext';
 import AppShell from '../components/AppShell';
@@ -170,9 +169,6 @@ export default function RootLayout({ children }) {
           <div className="splash-ring" />
         </div>
         <script dangerouslySetInnerHTML={{ __html: SPLASH_SCRIPT }} />
-        {/* Loaded once, globally, so it's already ready by the time a student opens EnrollModal
-            — avoids re-injecting/re-loading the script every time that modal opens and closes. */}
-        <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="afterInteractive" />
         <AppProvider>
           <AppShell>{children}</AppShell>
         </AppProvider>
