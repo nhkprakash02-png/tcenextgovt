@@ -1,15 +1,20 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Smartphone, MessageCircle } from 'lucide-react';
+import { Smartphone, MessageCircle, Loader2, CreditCard } from 'lucide-react';
 import Modal from './Modal';
 import { useApp } from '../context/AppContext';
 import { priceLabel, isMobileDevice } from '../lib/utils';
 
 export default function EnrollModal({ context, batchId }) {
-  const { DB, saveDB, user, closeModal, openModal } = useApp();
+  const { DB, setDB, saveDB, user, setUser, closeModal, openModal } = useApp();
   const [utr, setUtr] = useState('');
   const [copied, setCopied] = useState(false);
+  // Razorpay-specific state — entirely additive; nothing below touches the manual UPI flow's
+  // own state or logic.
+  const [payLoading, setPayLoading] = useState(false);
+  const [payError, setPayError] = useState('');
+  const [payDone, setPayDone] = useState(false);
 
   const batch = batchId ? DB.batches.find((b) => b.id === batchId) : DB.batches[0];
   const amount = batch ? batch.price : 300;
@@ -32,6 +37,7 @@ export default function EnrollModal({ context, batchId }) {
       ? 'This Study Material is part of our paid material library and is restricted to enrolled/paid batch students. Enroll in a batch below to instantly unlock it — PYQs, Daily Quizzes and Free Demo materials remain 100% free regardless.'
       : `Unlock full access to ${batchName} for ${priceLabel(amount)}.`;
 
+  // --- Existing manual UPI flow — UNCHANGED from before this integration ---
   const submitPaymentRef = () => {
     if (!user) { closeModal(); openModal('login'); return; }
     if (!utr.trim()) { alert('Please enter your UTR / Reference ID.'); return; }
@@ -48,11 +54,118 @@ export default function EnrollModal({ context, batchId }) {
     closeModal();
   };
 
+  // --- New: automated Razorpay flow ---
+  const payWithRazorpay = async () => {
+    if (!user) { closeModal(); openModal('login'); return; }
+    if (!batch) { setPayError('This batch is not available right now.'); return; }
+    if (typeof window === 'undefined' || !window.Razorpay) {
+      setPayError('Payment is still loading — please wait a moment and try again.');
+      return;
+    }
+    setPayError(''); setPayLoading(true);
+    try {
+      const orderRes = await fetch('/api/razorpay/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batchId: batch.id, studentId: user.id }),
+      });
+      const order = await orderRes.json();
+      if (!orderRes.ok) throw new Error(order.error || 'Could not start payment.');
+
+      const rzp = new window.Razorpay({
+        key: order.keyId,
+        order_id: order.orderId,
+        amount: order.amount,
+        currency: order.currency,
+        name: 'TCE - The Competitive Edge',
+        description: `Enrollment: ${order.batchName}`,
+        prefill: { name: user.name || '', email: user.email || '', contact: user.phone || '' },
+        theme: { color: '#F59E0B' },
+        handler: async (response) => {
+          // Runs only after Razorpay's own popup confirms the payment completed. This response
+          // is NOT trusted on its own — verify-payment independently recomputes the signature
+          // server-side before granting any access.
+          try {
+            const verifyRes = await fetch('/api/razorpay/verify-payment', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+                studentId: user.id,
+                batchId: batch.id,
+              }),
+            });
+            const verify = await verifyRes.json();
+            if (!verifyRes.ok) throw new Error(verify.error || 'Payment verification failed.');
+
+            // Server already wrote the authoritative record via the Admin SDK — update local
+            // state directly (not saveDB, which would trigger a redundant client-side write)
+            // so the student sees "Enrolled" immediately, without waiting for the realtime
+            // listener round-trip.
+            const updatedStudent = { ...user, paymentStatus: 'Approved', batch: verify.batchName || batch.name };
+            setUser(updatedStudent);
+            setDB((prev) => ({ ...prev, students: prev.students.map((s) => (s.id === user.id ? updatedStudent : s)) }));
+            setPayDone(true);
+          } catch (err) {
+            setPayError(err.message || 'Payment succeeded but enrollment could not be confirmed automatically. Please contact support with your payment ID: ' + response.razorpay_payment_id);
+          } finally {
+            setPayLoading(false);
+          }
+        },
+        modal: {
+          // Fires if the student closes the Razorpay popup without paying — not an error.
+          ondismiss: () => setPayLoading(false),
+        },
+      });
+      rzp.on('payment.failed', (resp) => {
+        setPayLoading(false);
+        setPayError(resp?.error?.description || 'Payment failed. Please try again.');
+      });
+      rzp.open();
+    } catch (err) {
+      setPayLoading(false);
+      setPayError(err.message || 'Could not start payment. Please try again.');
+    }
+  };
+
+  if (payDone) {
+    return (
+      <Modal title="Enrollment Successful">
+        <div className="text-center py-4">
+          <p className="text-sm font-semibold mb-1.5">🎉 You're enrolled in {batch ? batch.name : batchName}!</p>
+          <p className="text-xs muted">Your access has been unlocked immediately — no waiting for approval.</p>
+          <button onClick={closeModal} className="w-full btn-gold rounded-lg py-2.5 text-sm font-bold mt-4">Done</button>
+        </div>
+      </Modal>
+    );
+  }
+
   return (
     <Modal title={title}>
       <p className="text-sm muted mb-4">{desc}</p>
+
+      {/* New: automated payment, presented as the primary option */}
+      <button
+        onClick={payWithRazorpay}
+        disabled={payLoading}
+        className="w-full mb-3 flex items-center justify-center gap-2 btn-gold rounded-lg py-3 text-sm font-bold disabled:opacity-60"
+      >
+        {payLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
+        {payLoading ? 'Opening payment…' : `Pay ${priceLabel(amount)} Online — Instant Access`}
+      </button>
+      {payError && <p className="text-xs text-red-400 mb-3">{payError}</p>}
+
+      <div className="flex items-center gap-3 mb-3">
+        <div className="flex-1 h-px" style={{ background: 'var(--border)' }} />
+        <span className="text-xs muted">or pay manually via UPI</span>
+        <div className="flex-1 h-px" style={{ background: 'var(--border)' }} />
+      </div>
+
+      {/* Existing manual UPI flow — UNCHANGED */}
       {mobile && (
-        <a href={upiUri} className="w-full mb-4 flex items-center justify-center gap-2 btn-gold rounded-lg py-3 text-sm font-bold">
+        <a href={upiUri} className="w-full mb-4 flex items-center justify-center gap-2 border rounded-lg py-3 text-sm font-bold" style={{ borderColor: 'var(--border)' }}>
           <Smartphone className="w-4 h-4" /> Pay {priceLabel(amount)} via GPay / PhonePe / Paytm
         </a>
       )}
