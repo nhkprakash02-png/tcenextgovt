@@ -107,17 +107,11 @@ export async function migrateLegacySubmissionsIfNeeded(existingIds) {
   }
 }
 
-// Live sync for submissions — separate from attachDbRealtimeListeners below, since submissions
-// now live in their own collection rather than as one of the DB_KEYS documents. Fires
-// `onChange(fullSubmissionsArray)` whenever anything in the collection changes; Firestore
-// aggregates concurrent writes from different clients server-side, so this always reflects
-// everyone's submissions correctly with no client-side merge race.
-export function attachSubmissionsRealtimeListener(onChange) {
-  if (DEMO_MODE || !fbDB) return () => {};
-  return onSnapshot(collection(fbDB, SUBMISSIONS_COLLECTION), (snap) => {
-    onChange(snap.docs.map((d) => d.data()));
-  }, (err) => console.warn('Submissions live sync listener error:', err));
-}
+// FIX (Firestore read-quota investigation): attachSubmissionsRealtimeListener used to live
+// here — a persistent onSnapshot listener on the entire tce_submissions collection. Removed
+// entirely; see the detailed comment in AppContext.jsx (where it used to be called) for why.
+// loadAllSubmissions() below remains exactly as it was — it's the one-time read that already
+// correctly loads submissions on every app boot via loadDB(), and was never part of the problem.
 
 export async function writeKeyValue(key, value) {
   const ref = doc(fbDB, FS_COLLECTION, key);
