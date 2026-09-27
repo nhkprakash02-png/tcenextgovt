@@ -8,7 +8,7 @@ export default function robots() {
     rules: {
       userAgent: '*',
       allow: '/',
-      disallow: '/dashboard',
+      disallow: ['/dashboard', '/dev-email-test'],
     },
     sitemap: 'https://tcenahata.in/sitemap.xml',
   };
