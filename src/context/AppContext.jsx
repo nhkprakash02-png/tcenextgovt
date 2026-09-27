@@ -366,6 +366,21 @@ export function AppProvider({ children }) {
         } else {
           setUser(existing);
         }
+        // NEW: welcome email — fires only for a Google sign-in specifically (per spec: "the
+        // very first time a student logs in with Google"), and only if not already sent. The
+        // actual "only once" guarantee is enforced server-side (see
+        // api/email/send-welcome/route.js's welcomeEmailSent check via Firebase Admin) — this
+        // client-side check is just an optimization to skip a pointless network call on every
+        // subsequent login, not the source of truth. Fire-and-forget with .catch(): an email
+        // hiccup here can NEVER break or delay this existing login flow.
+        const isGoogleSignIn = (firebaseUser.providerData || []).some((p) => p.providerId === 'google.com');
+        if (isGoogleSignIn && !existing.welcomeEmailSent) {
+          fetch('/api/email/send-welcome', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ studentId: existing.id }),
+          }).catch((e) => console.warn('Welcome email failed to send', e));
+        }
         closeModal();
         // Was setActiveTabState('dashboard') pre-migration; now a real route change, which is
         // the equivalent since activeTab is derived from the URL.
