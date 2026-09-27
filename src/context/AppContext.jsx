@@ -22,7 +22,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { getRedirectResult, onAuthStateChanged, signOut } from 'firebase/auth';
-import { loadDB, saveDB as persistDB, attachDbRealtimeListeners, attachSubmissionsRealtimeListener, writeSubmission, loadBanners } from '../lib/db';
+import { loadDB, saveDB as persistDB, attachDbRealtimeListeners, writeSubmission, loadBanners } from '../lib/db';
 import { emptyDB } from '../lib/seedData';
 import { fbAuth } from '../firebase';
 import { isExemptEmail, uid } from '../lib/utils';
@@ -124,19 +124,20 @@ export function AppProvider({ children }) {
     return unsub;
   }, []);
 
-  // Submissions have their own realtime listener, separate from the DB_KEYS one above, since
-  // they now live in their own per-document collection (see SUBMISSIONS_COLLECTION in db.js) —
-  // this is the actual fix for the "sequential submissions overwriting each other" bug. Doesn't
-  // need the examInProgress guard the DB_KEYS listener uses: another student's submission
-  // landing here just updates DB.submissions, which the exam screen itself never reads from
-  // mid-test (only the result screen does, after finishing), so it can't disrupt anyone's
-  // in-progress exam.
-  useEffect(() => {
-    const unsub = attachSubmissionsRealtimeListener((submissions) => {
-      setDB((prev) => ({ ...prev, submissions }));
-    });
-    return unsub;
-  }, []);
+  // FIX (Firestore read-quota investigation): this used to also subscribe a persistent
+  // onSnapshot listener on the ENTIRE tce_submissions collection here, via
+  // attachSubmissionsRealtimeListener. That was found to be the primary cause of an
+  // unexpectedly high daily Firestore read count: a whole-collection listener re-reads every
+  // document in the collection on initial subscribe AND on every reconnect (common on mobile —
+  // switching networks, backgrounding the app, brief signal drops), and this scales with BOTH
+  // the number of submissions ever recorded AND the number of simultaneously open browser tabs.
+  // It was also entirely redundant: loadDB() (called once at boot, just above in this file)
+  // already does a one-time getDocs() read of this exact same collection via
+  // loadAllSubmissions() in lib/db.js — so submissions were already being loaded correctly
+  // without this listener. The only thing the listener added was "other students' new
+  // submissions appear instantly without a refresh," which isn't something this app's
+  // leaderboard or results panel actually needs in real time. Removed entirely rather than
+  // replaced with a new one-time-read function, since loadDB() already covers that need.
 
   // Records one finished exam attempt. This writes ONLY that submission's own Firestore
   // document (writeSubmission), never the whole submissions collection — see the fix note on
