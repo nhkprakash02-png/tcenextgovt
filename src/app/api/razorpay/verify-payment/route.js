@@ -17,6 +17,8 @@
 import { NextResponse } from 'next/server';
 import { readAdminKeyValue, writeAdminKeyValue } from '../../../../lib/firebaseAdmin';
 import { verifyRazorpaySignature } from '../../../../lib/razorpayServer';
+import { sendEmail } from '../../../../lib/resend';
+import { paymentConfirmationEmail } from '../../../../lib/emailTemplates';
 
 export async function POST(request) {
   try {
@@ -71,6 +73,26 @@ export async function POST(request) {
     const nextStudents = [...students];
     nextStudents[idx] = updated;
     await writeAdminKeyValue('students', nextStudents);
+
+    // NEW: payment confirmation email. Wrapped in its own try/catch, separate from everything
+    // above — if Resend is down or the email fails for any reason, the payment has ALREADY
+    // been verified and the student ALREADY enrolled (both lines above have already completed
+    // successfully); a failed email must never undo that or make this endpoint report failure.
+    if (updated.email) {
+      try {
+        const { subject, html } = paymentConfirmationEmail({
+          name: updated.name || 'there',
+          batchName: batch.name,
+          amount: batch.price,
+          paymentId,
+          orderId,
+          date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }),
+        });
+        await sendEmail({ to: updated.email, subject, html });
+      } catch (emailErr) {
+        console.error('Payment confirmation email failed to send (payment itself was still verified successfully):', emailErr);
+      }
+    }
 
     return NextResponse.json({ ok: true, batchName: batch.name });
   } catch (err) {
