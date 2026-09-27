@@ -26,7 +26,27 @@ export default function StudentsManager() {
     setForm({ ...EMPTY, batch: DB.batches[0]?.name || '' });
   };
 
-  const grantAccess = (id) => saveDB((prev) => ({ ...prev, students: prev.students.map((s) => (s.id === id ? { ...s, paymentStatus: 'Approved', batch: s.batch === '—' ? 'WBP Special' : s.batch } : s)) }));
+  const grantAccess = (id) => {
+    // Everything inside this saveDB(...) call is byte-for-byte identical to the original
+    // one-line version of this function — only wrapped in a block so batchName can be captured
+    // for the new email trigger below.
+    let batchName = null;
+    saveDB((prev) => ({
+      ...prev,
+      students: prev.students.map((s) => {
+        if (s.id !== id) return s;
+        batchName = s.batch === '—' ? 'WBP Special' : s.batch;
+        return { ...s, paymentStatus: 'Approved', batch: batchName };
+      }),
+    }));
+    // NEW: enrollment confirmation email, fire-and-forget — never blocks or affects the grant
+    // logic above in any way, including if this request fails or Resend is briefly down.
+    fetch('/api/email/send-enrollment-confirmation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ studentId: id, batchName }),
+    }).catch((e) => console.warn('Enrollment confirmation email failed to send', e));
+  };
   const blockStudent = (id) => saveDB((prev) => ({ ...prev, students: prev.students.map((s) => (s.id === id ? { ...s, paymentStatus: 'Blocked' } : s)) }));
   const deleteStudent = (id) => {
     if (!confirm('Are you sure you want to delete this student record? This cannot be undone.')) return;
