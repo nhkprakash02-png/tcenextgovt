@@ -397,16 +397,6 @@ export function GoogleRegisterModal({ profile }) {
     const student = { id: uid('st'), uid: profile.uid, name, email, phone: phone.trim(), photoURL: profile.photoURL || '', address: '', joinDate: new Date().toISOString().slice(0, 10), registeredAt: new Date().toISOString(), paymentStatus: 'Not Enrolled', batch: '—', pendingReview: true };
     saveDB((prev) => ({ ...prev, students: [...prev.students, student] }));
     setUser(student); closeModal(); setTab('dashboard');
-    // NEW: welcome email for a brand-new Google signup. This modal only ever renders from a
-    // Google sign-in (see AppContext.jsx's onAuthStateChanged — it's the "no existing match"
-    // branch, specifically for Google), so no provider check is needed here, unlike the
-    // matching trigger in AppContext.jsx. Fire-and-forget with .catch(): never blocks or
-    // affects this existing signup flow.
-    fetch('/api/email/send-welcome', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ studentId: student.id }),
-    }).catch((e) => console.warn('Welcome email failed to send', e));
   };
 
   const inputCls = 'w-full rounded-lg px-3 py-2.5 text-sm';
