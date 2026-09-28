@@ -27,6 +27,7 @@ import { emptyDB } from '../lib/seedData';
 import { fbAuth } from '../firebase';
 import { isExemptEmail, uid } from '../lib/utils';
 import { PATH_FOR_TAB, tabForPath, parseTestDeepLink } from '../lib/routes';
+import { triggerWelcomeEmail } from '../lib/welcomeEmailClient';
 
 const CUR_KEY = 'currentUser';
 const ADM_KEY = 'tce_admin_session_v1';
@@ -343,6 +344,13 @@ export function AppProvider({ children }) {
       if (!firebaseUser || !firebaseUser.email) return;
       const currentUser = userRef.current;
       if (currentUser && (currentUser.email || '').toLowerCase() === firebaseUser.email.toLowerCase()) return; // already logged in as this account
+      // Welcome email: triggered here, at the moment a Google sign-in is detected, rather than
+      // at the end of the phone-number step. That way it covers EVERYONE with a Firebase Auth
+      // account — including people who sign in and leave before finishing registration (they
+      // have no student record). The server verifies the ID token and enforces "only once, and
+      // only after Resend confirms" — see api/email/send-welcome/route.js. Best-effort: it can
+      // never affect login or registration.
+      triggerWelcomeEmail(firebaseUser);
       const profile = { uid: firebaseUser.uid, name: firebaseUser.displayName || 'Student', email: firebaseUser.email, phone: firebaseUser.phoneNumber || '', photoURL: firebaseUser.photoURL || '' };
       // Matches by Firebase uid FIRST (added alongside the fix above) — the most reliable key,
       // since it can never collide or change, unlike email/phone. Existing students created
@@ -366,21 +374,6 @@ export function AppProvider({ children }) {
           setUser(updated);
         } else {
           setUser(existing);
-        }
-        // NEW: welcome email — fires only for a Google sign-in specifically (per spec: "the
-        // very first time a student logs in with Google"), and only if not already sent. The
-        // actual "only once" guarantee is enforced server-side (see
-        // api/email/send-welcome/route.js's welcomeEmailSent check via Firebase Admin) — this
-        // client-side check is just an optimization to skip a pointless network call on every
-        // subsequent login, not the source of truth. Fire-and-forget with .catch(): an email
-        // hiccup here can NEVER break or delay this existing login flow.
-        const isGoogleSignIn = (firebaseUser.providerData || []).some((p) => p.providerId === 'google.com');
-        if (isGoogleSignIn && !existing.welcomeEmailSent) {
-          fetch('/api/email/send-welcome', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studentId: existing.id }),
-          }).catch((e) => console.warn('Welcome email failed to send', e));
         }
         closeModal();
         // Was setActiveTabState('dashboard') pre-migration; now a real route change, which is
