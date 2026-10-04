@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Pencil, Trash2 } from 'lucide-react';
+import { Pencil, Trash2, Loader2, X } from 'lucide-react';
 import { uid } from '../../lib/utils';
 import { resolveCorrectKey } from '../../lib/examEngine';
+import { uploadQuestionSolutionImage } from '../../lib/questionImageUpload';
 
 const EMPTY = { en: '', bn: '', a: '', b: '', c: '', d: '', correct: 'A', exp: '', solimg: '' };
 
@@ -12,6 +13,25 @@ const EMPTY = { en: '', bn: '', a: '', b: '', c: '', d: '', correct: 'A', exp: '
 export default function QuestionEditor({ test, onChangeQuestions }) {
   const [form, setForm] = useState(EMPTY);
   const [bulkJson, setBulkJson] = useState('');
+  // New: solution-image upload state only — doesn't touch any existing field or flow.
+  const [solImgUploading, setSolImgUploading] = useState(false);
+  const [solImgError, setSolImgError] = useState('');
+
+  const handleSolutionImageChange = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ''; // allow re-selecting the same file name after a failed/cleared attempt
+    if (!file) return;
+    setSolImgError('');
+    setSolImgUploading(true);
+    try {
+      const url = await uploadQuestionSolutionImage(file, { testId: test?.id, subject: test?.subject, questionId: uid('qimg') });
+      setForm((f) => ({ ...f, solimg: url }));
+    } catch (err) {
+      setSolImgError(err.message || 'Upload failed. Please try again.');
+    } finally {
+      setSolImgUploading(false);
+    }
+  };
 
   const addQuestion = () => {
     const { en, bn, a, b, c, d, correct, exp, solimg } = form;
@@ -66,7 +86,26 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
             <option>A</option><option>B</option><option>C</option><option>D</option>
           </select>
           <input value={form.exp} onChange={(e) => setForm({ ...form, exp: e.target.value })} type="text" placeholder="Explanation" className="rounded-lg px-3 py-2 text-xs" />
-          <input value={form.solimg} onChange={(e) => setForm({ ...form, solimg: e.target.value })} type="text" placeholder="Solution photo URL/Base64 (optional)" className="rounded-lg px-3 py-2 text-xs" />
+          <div className="flex flex-col gap-1">
+            {/* Solution image: was a plain URL/Base64 text input, now a direct file upload to
+                Firebase Storage. Validation (strictly under 1MB) reuses validateSourcePhoto from
+                lib/imageUtils.js — the same rule already enforced for profile photos — so the
+                error message a student or admin sees for "file too big" is consistent app-wide. */}
+            <label className="rounded-lg px-3 py-2 text-xs border flex items-center justify-between cursor-pointer" style={{ borderColor: 'var(--border)' }}>
+              <span className="muted">{solImgUploading ? 'Uploading…' : form.solimg ? 'Solution photo ✓ uploaded' : 'Upload solution photo (optional, max 1MB)'}</span>
+              {solImgUploading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              <input type="file" accept="image/*" onChange={handleSolutionImageChange} disabled={solImgUploading} className="hidden" />
+            </label>
+            {form.solimg && !solImgUploading && (
+              <div className="flex items-center gap-2">
+                <img src={form.solimg} alt="Solution preview" className="h-10 w-10 object-cover rounded border" style={{ borderColor: 'var(--border)' }} />
+                <button type="button" onClick={() => setForm((f) => ({ ...f, solimg: '' }))} className="text-[10px] muted flex items-center gap-0.5 hover:text-current">
+                  <X className="w-3 h-3" /> Remove
+                </button>
+              </div>
+            )}
+            {solImgError && <p className="text-[10px] text-red-400">{solImgError}</p>}
+          </div>
         </div>
         <button onClick={addQuestion} className="btn-gold rounded-lg px-4 py-2 text-xs font-bold">+ Add Question</button>
       </div>
