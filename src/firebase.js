@@ -9,12 +9,18 @@
 // control is still good hygiene, especially since this project's Firestore rules should be
 // the real access boundary (see README "Security notes").
 //
-// NOTE: Firebase Storage is deliberately NOT initialized here — profile photos are stored as
-// compressed Base64 strings directly in Firestore instead (see src/lib/imageUtils.js), so this
-// project can stay fully on the free Spark plan without needing Storage enabled at all.
+// NOTE on Storage: student profile photos still deliberately avoid Storage, staying as
+// compressed Base64 strings directly in Firestore instead (see src/lib/imageUtils.js) — that
+// choice is unchanged. Storage IS now initialized below, used for exactly one thing: admin-
+// uploaded question solution images (see lib/questionImageUpload.js), which are too numerous
+// and too large to reasonably store as Base64 inside question documents. Firebase's free Spark
+// plan includes 5GB of Storage and 1GB/day of download bandwidth, and the 1MB per-image cap
+// enforced at upload time keeps this comfortably inside that free tier even with hundreds of
+// solution images.
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 
 export const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || 'AIzaSyAelAmzeV33Ejc6i-aDKJg_GDgqJdswcI4',
@@ -27,14 +33,15 @@ export const firebaseConfig = {
 
 export const DEMO_MODE = false;
 
-let fbApp = null, fbAuth = null, fbDB = null;
+let fbApp = null, fbAuth = null, fbDB = null, fbStorage = null;
 try {
   fbApp = initializeApp(firebaseConfig);
   fbAuth = getAuth(fbApp);
   fbDB = getFirestore(fbApp);
+  fbStorage = getStorage(fbApp);
 } catch (e) {
   console.warn('Firebase init failed, using demo mode', e);
 }
 
-export { fbApp, fbAuth, fbDB };
+export { fbApp, fbAuth, fbDB, fbStorage };
 export const googleProvider = new GoogleAuthProvider();
