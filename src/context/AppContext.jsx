@@ -363,7 +363,22 @@ export function AppProvider({ children }) {
     const unsub = onAuthStateChanged(fbAuth, (firebaseUser) => {
       if (!firebaseUser || !firebaseUser.email) return;
       const currentUser = userRef.current;
-      if (currentUser && (currentUser.email || '').toLowerCase() === firebaseUser.email.toLowerCase()) return; // already logged in as this account
+      // Google profile picture: Firebase sometimes leaves user.photoURL empty while the Google
+      // provider entry still carries it, so check both.
+      const googlePhoto = firebaseUser.photoURL || (firebaseUser.providerData || []).map((p) => p && p.photoURL).find(Boolean) || '';
+      if (currentUser && (currentUser.email || '').toLowerCase() === firebaseUser.email.toLowerCase()) {
+        // Already logged in as this account (so the full login path below is skipped). Still
+        // save their Google picture once if their record has no photo at all — this covers
+        // students who logged in before photos were captured. Never overwrites an existing
+        // photo, so a manually uploaded one always wins.
+        const rec = dbRef.current.students.find((s) => s.id === currentUser.id);
+        if (googlePhoto && rec && !rec.photoURL) {
+          const withPhoto = { ...rec, photoURL: googlePhoto };
+          saveDB((prev) => ({ ...prev, students: prev.students.map((s) => (s.id === rec.id ? withPhoto : s)) }));
+          setUser(withPhoto);
+        }
+        return;
+      }
       // Welcome email: triggered here, at the moment a Google sign-in is detected, rather than
       // at the end of the phone-number step. That way it covers EVERYONE with a Firebase Auth
       // account — including people who sign in and leave before finishing registration (they
@@ -371,7 +386,7 @@ export function AppProvider({ children }) {
       // only after Resend confirms" — see api/email/send-welcome/route.js. Best-effort: it can
       // never affect login or registration.
       triggerWelcomeEmail(firebaseUser);
-      const profile = { uid: firebaseUser.uid, name: firebaseUser.displayName || 'Student', email: firebaseUser.email, phone: firebaseUser.phoneNumber || '', photoURL: firebaseUser.photoURL || '' };
+      const profile = { uid: firebaseUser.uid, name: firebaseUser.displayName || 'Student', email: firebaseUser.email, phone: firebaseUser.phoneNumber || '', photoURL: googlePhoto };
       // Matches by Firebase uid FIRST (added alongside the fix above) — the most reliable key,
       // since it can never collide or change, unlike email/phone. Existing students created
       // before this field existed simply have no `uid` yet, so they fall through to the
