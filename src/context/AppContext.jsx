@@ -20,7 +20,7 @@
 //     doesn't exist — reading it during the initial render would both crash SSR and cause a
 //     hydration mismatch. See the `hydrated` flag below for how persistence is gated on it.
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { getRedirectResult, onAuthStateChanged, signOut } from 'firebase/auth';
 import { loadDB, saveDB as persistDB, attachDbRealtimeListeners, writeSubmission, loadBanners } from '../lib/db';
 import { emptyDB } from '../lib/seedData';
@@ -36,7 +36,13 @@ const THEME_KEY = 'tce_theme';
 const AppContext = createContext(null);
 
 export function AppProvider({ children }) {
-  const router = useRouter();
+  // Tab changes are purely client-side: they only update the URL via the native History API,
+  // which Next.js (14.1+) syncs with usePathname(). Unlike router.push(), this never asks the
+  // server for a new page, so there is no network wait and no way for the router to fall back
+  // to a full document reload (which is what re-showed the logo splash screen).
+  const pushPath = useCallback((path) => {
+    if (window.location.pathname !== path) window.history.pushState(null, '', path);
+  }, []);
   const pathname = usePathname() || '/';
   // The URL is the source of truth for which section is showing. tabForPath() is the same
   // mapping the Vite build used, so every `activeTab === 'mocks'`-style check still works.
@@ -258,18 +264,17 @@ export function AppProvider({ children }) {
 
   // setTab records where you came FROM onto a small history stack, so goBack() can retrace
   // your steps within the app (Home, Mock Tests, Dashboard, etc.) — this is what powers the
-  // on-page Back button. Under Next it navigates to that section's real App Router route with
-  // router.push(); activeTab then follows from the new pathname automatically.
+  // on-page Back button. It updates the URL with the History API (see pushPath above);
+  // activeTab then follows from the new pathname automatically and AppShell swaps the view.
   const setTab = useCallback((id) => {
     const prev = activeTabRef.current;
     if (prev !== id) {
       activeTabRef.current = id; // avoid double-stacking if setTab fires twice before the route commits
       setTabStack((stack) => [...stack, prev].slice(-20)); // cap history length
-      const path = PATH_FOR_TAB[id] || '/';
-      if (window.location.pathname !== path) router.push(path);
+      pushPath(PATH_FOR_TAB[id] || '/');
     }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [router]);
+    window.scrollTo(0, 0); // instant jump (no slow smooth-scroll animation) as the new view appears
+  }, [pushPath]);
 
   const goBack = useCallback(() => {
     const stack = tabStackRef.current;
@@ -277,9 +282,9 @@ export function AppProvider({ children }) {
     const path = PATH_FOR_TAB[nextTab] || '/';
     activeTabRef.current = nextTab;
     setTabStack((s) => (s.length ? s.slice(0, -1) : s));
-    if (window.location.pathname !== path) router.push(path);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [router]);
+    pushPath(path);
+    window.scrollTo(0, 0);
+  }, [pushPath]);
 
   // Call after any in-memory DB mutation to persist to Firestore (fire-and-forget, matches
   // original saveDB() semantics — UI updates optimistically, sync happens in the background).
@@ -378,7 +383,7 @@ export function AppProvider({ children }) {
         closeModal();
         // Was setActiveTabState('dashboard') pre-migration; now a real route change, which is
         // the equivalent since activeTab is derived from the URL.
-        router.push(PATH_FOR_TAB.dashboard);
+        pushPath(PATH_FOR_TAB.dashboard);
       } else if (pendingSignupProfileRef.current) {
         // A brand-new email/password signup, with name/phone already collected on the form —
         // create their profile directly here, with no modal detour.
@@ -388,7 +393,7 @@ export function AppProvider({ children }) {
         saveDB((prev) => ({ ...prev, students: [...prev.students, student] }));
         setUser(student);
         closeModal();
-        router.push(PATH_FOR_TAB.dashboard);
+        pushPath(PATH_FOR_TAB.dashboard);
       } else {
         // A brand-new Google sign-in with no prior signup form data — still need to ask for
         // the one missing detail (phone) via GoogleRegisterModal.
@@ -396,7 +401,7 @@ export function AppProvider({ children }) {
       }
     });
     return unsub;
-  }, [dbLoading, saveDB, setUser, router, closeModal]);
+  }, [dbLoading, saveDB, setUser, pushPath, closeModal]);
 
   // True for the 4 exempt mentor/admin accounts — full content access bypass everywhere a mock
   // test or material would otherwise check the site-admin flag. Kept separate from `admin`
