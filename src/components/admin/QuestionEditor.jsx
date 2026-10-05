@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Pencil, Trash2, Loader2, X } from 'lucide-react';
+import { Pencil, Trash2, Loader2, X, ImagePlus } from 'lucide-react';
 import { uid } from '../../lib/utils';
 import { resolveCorrectKey } from '../../lib/examEngine';
 import { uploadQuestionSolutionImage } from '../../lib/questionImageUpload';
@@ -16,6 +16,35 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
   // New: solution-image upload state only — doesn't touch any existing field or flow.
   const [solImgUploading, setSolImgUploading] = useState(false);
   const [solImgError, setSolImgError] = useState('');
+  // New: per-question solution-photo upload from the question list (works for bulk-uploaded
+  // questions too). Tracks which question is uploading and which one last failed, with why.
+  const [rowUploadingId, setRowUploadingId] = useState(null);
+  const [rowError, setRowError] = useState({ id: null, msg: '' });
+
+  const handleRowSolutionImage = async (qid, e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ''; // lets the admin re-pick the same file after a failed attempt
+    if (!file) return;
+    setRowError({ id: null, msg: '' });
+    setRowUploadingId(qid);
+    try {
+      // Same helper the Add Question form uses: rejects non-images and files over 1MB with a
+      // clear message, then uploads to Firebase Storage and returns the download URL. The
+      // timestamp keeps a replaced photo's URL different from the old one, so browsers never
+      // show a stale cached image.
+      const url = await uploadQuestionSolutionImage(file, { testId: test?.id, subject: test?.subject, questionId: qid + '_' + Date.now().toString(36) });
+      onChangeQuestions((qs) => qs.map((x) => (x.id === qid ? { ...x, solutionImg: url } : x)));
+    } catch (err) {
+      setRowError({ id: qid, msg: err.message || 'Upload failed. Please try again.' });
+    } finally {
+      setRowUploadingId(null);
+    }
+  };
+
+  const removeRowSolutionImage = (qid) => {
+    if (!confirm('Remove the solution photo from this question?')) return;
+    onChangeQuestions((qs) => qs.map((x) => (x.id === qid ? { ...x, solutionImg: '' } : x)));
+  };
 
   const handleSolutionImageChange = async (e) => {
     const file = e.target.files && e.target.files[0];
@@ -123,8 +152,24 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
             <div>
               <p className="text-xs font-medium">{i + 1}. {q.textEn} {q.textBn && <span className="bn muted block text-[11px]">{q.textBn}</span>}</p>
               <p className="text-[10px] muted mt-1">Correct: {q.correct}</p>
+              {q.solutionImg && (
+                <div className="flex items-center gap-2 mt-1.5">
+                  <img src={q.solutionImg} alt="Solution" className="h-10 w-10 object-cover rounded border" style={{ borderColor: 'var(--border)' }} />
+                  <button type="button" onClick={() => removeRowSolutionImage(q.id)} className="text-[10px] muted flex items-center gap-0.5 hover:text-current">
+                    <X className="w-3 h-3" /> Remove photo
+                  </button>
+                </div>
+              )}
+              {rowError.id === q.id && rowError.msg && <p className="text-[10px] text-red-400 mt-1">{rowError.msg}</p>}
             </div>
             <div className="flex gap-2 shrink-0">
+              <label
+                title={q.solutionImg ? 'Replace solution photo (max 1MB)' : 'Upload solution photo (max 1MB)'}
+                className={`cursor-pointer ${q.solutionImg ? 'text-emerald-400' : 'text-sky-400'} ${rowUploadingId === q.id ? 'opacity-60 pointer-events-none' : ''}`}
+              >
+                {rowUploadingId === q.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImagePlus className="w-4 h-4" />}
+                <input type="file" accept="image/*" onChange={(e) => handleRowSolutionImage(q.id, e)} disabled={rowUploadingId !== null} className="hidden" />
+              </label>
               <button onClick={() => editQuestion(q.id)} className="text-amber-400"><Pencil className="w-4 h-4" /></button>
               <button onClick={() => deleteQuestion(q.id)} className="text-red-400"><Trash2 className="w-4 h-4" /></button>
             </div>
