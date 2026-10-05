@@ -5,6 +5,7 @@ import { Pencil, Trash2, Loader2, X, ImagePlus } from 'lucide-react';
 import { uid } from '../../lib/utils';
 import { resolveCorrectKey } from '../../lib/examEngine';
 import { uploadQuestionSolutionImage } from '../../lib/questionImageUpload';
+import SolutionImage from '../SolutionImage';
 
 const EMPTY = { en: '', bn: '', a: '', b: '', c: '', d: '', correct: 'A', exp: '', solimg: '' };
 
@@ -29,9 +30,9 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
     setRowUploadingId(qid);
     try {
       // Same helper the Add Question form uses: rejects non-images and files over 1MB with a
-      // clear message, then uploads to Firebase Storage and returns the download URL. The
-      // timestamp keeps a replaced photo's URL different from the old one, so browsers never
-      // show a stale cached image.
+      // clear message, shrinks the photo, saves it in Firestore (no Firebase Storage needed) and
+      // returns a short reference to store on the question. Every upload gets a brand-new
+      // reference, so a replaced photo never shows a stale cached image.
       const url = await uploadQuestionSolutionImage(file, { testId: test?.id, subject: test?.subject, questionId: qid + '_' + Date.now().toString(36) });
       onChangeQuestions((qs) => qs.map((x) => (x.id === qid ? { ...x, solutionImg: url } : x)));
     } catch (err) {
@@ -131,7 +132,7 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
             </label>
             {form.solimg && !solImgUploading && (
               <div className="flex items-center gap-2">
-                <img src={form.solimg} alt="Solution preview" className="h-10 w-10 object-cover rounded border" style={{ borderColor: 'var(--border)' }} />
+                <SolutionImage src={form.solimg} alt="Solution preview" className="h-10 w-10 object-cover rounded border" style={{ borderColor: 'var(--border)' }} />
                 <button type="button" onClick={() => setForm((f) => ({ ...f, solimg: '' }))} className="text-[10px] muted flex items-center gap-0.5 hover:text-current">
                   <X className="w-3 h-3" /> Remove
                 </button>
@@ -158,7 +159,7 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
               <p className="text-[10px] muted mt-1">Correct: {q.correct}</p>
               {q.solutionImg && (
                 <div className="flex items-center gap-2 mt-1.5">
-                  <img src={q.solutionImg} alt="Solution" className="h-10 w-10 object-cover rounded border" style={{ borderColor: 'var(--border)' }} />
+                  <SolutionImage src={q.solutionImg} alt="Solution" className="h-10 w-10 object-cover rounded border" style={{ borderColor: 'var(--border)' }} />
                   <button type="button" onClick={() => removeRowSolutionImage(q.id)} className="text-[10px] muted flex items-center gap-0.5 hover:text-current">
                     <X className="w-3 h-3" /> Remove photo
                   </button>
