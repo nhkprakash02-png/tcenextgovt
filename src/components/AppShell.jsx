@@ -5,11 +5,12 @@
 // Navbar, Ticker, (Home only) HeroCarousel, the page body, (Home only) Mentors, Footer,
 // BackButton, the two floating action buttons, and the modal stack.
 //
-// The single change from App.jsx: the PAGES lookup table and `const Page = PAGES[activeTab]`
-// are gone. Under the App Router each section is a real route with its own app/<path>/page.js,
-// and Next hands the matching page in as `children`. `isHome` still comes from activeTab, which
-// AppContext derives from the URL — so HeroCarousel and Mentors appear on exactly the same
-// screen they always did.
+// Tab switching is client-side only (AppContext updates the URL with the History API, no server
+// request, no reload). `children` is the server-rendered page for the route the visitor first
+// landed on — kept as-is so the initial HTML, metadata and JSON-LD are unchanged. Once the
+// visitor switches to a different tab, the matching view is rendered directly from PAGES below,
+// exactly like the original Vite App.jsx did. `isHome` still comes from activeTab, which
+// AppContext derives from the URL.
 import React, { useEffect, useState } from 'react';
 import { Download, MessageCircle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
@@ -24,6 +25,25 @@ import AuthModal, { GoogleRegisterModal } from './AuthModal';
 import EnrollModal from './EnrollModal';
 import AdminLoginModal from './AdminLoginModal';
 import AdminPanel from '../views/AdminPanel';
+import Home from '../views/Home';
+import MockTest from '../views/MockTest';
+import Quiz from '../views/Quiz';
+import PyqHub from '../views/PyqHub';
+import StudyMaterials from '../views/StudyMaterials';
+import Batches from '../views/Batches';
+import Dashboard from '../views/Dashboard';
+import Notices from '../views/Notices';
+
+const PAGES = {
+  home: Home,
+  mocks: MockTest,
+  quiz: Quiz,
+  pyq: PyqHub,
+  materials: StudyMaterials,
+  batches: Batches,
+  dashboard: Dashboard,
+  notices: Notices,
+};
 
 function useInstallPrompt() {
   const [deferred, setDeferred] = useState(null);
@@ -40,6 +60,8 @@ export default function AppShell({ children }) {
   const { activeTab, modal } = useApp();
   const { canInstall, trigger } = useInstallPrompt();
   const isHome = activeTab === 'home';
+  const [initialTab] = useState(activeTab); // the tab whose server-rendered page is in `children`
+  const Page = PAGES[activeTab] || Home;
 
   return (
     <>
@@ -49,7 +71,7 @@ export default function AppShell({ children }) {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
         <div className="fade-in">
-          {children}
+          {activeTab === initialTab ? children : <Page />}
         </div>
       </main>
 
