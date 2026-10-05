@@ -35,7 +35,9 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
       const url = await uploadQuestionSolutionImage(file, { testId: test?.id, subject: test?.subject, questionId: qid + '_' + Date.now().toString(36) });
       onChangeQuestions((qs) => qs.map((x) => (x.id === qid ? { ...x, solutionImg: url } : x)));
     } catch (err) {
-      setRowError({ id: qid, msg: err.message || 'Upload failed. Please try again.' });
+      const msg = err.message || 'Upload failed. Please try again.';
+      setRowError({ id: qid, msg });
+      alert('Solution photo upload failed:\n\n' + msg);
     } finally {
       setRowUploadingId(null);
     }
@@ -56,7 +58,9 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
       const url = await uploadQuestionSolutionImage(file, { testId: test?.id, subject: test?.subject, questionId: uid('qimg') });
       setForm((f) => ({ ...f, solimg: url }));
     } catch (err) {
-      setSolImgError(err.message || 'Upload failed. Please try again.');
+      const msg = err.message || 'Upload failed. Please try again.';
+      setSolImgError(msg);
+      alert('Solution photo upload failed:\n\n' + msg);
     } finally {
       setSolImgUploading(false);
     }
