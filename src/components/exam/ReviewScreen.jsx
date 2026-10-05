@@ -5,6 +5,7 @@ import { ArrowLeft, Menu, X, Zap, CheckCircle, Clock, AlertCircle, Eye } from 'l
 import { useApp } from '../../context/AppContext';
 import { sectionDisplayName, classifySpeed, computeCommunityAccuracy, fmtReviewTime, liveSubmissionTitle } from '../../lib/examEngine';
 import useLockBodyScroll from '../../hooks/useLockBodyScroll';
+import SolutionImage from '../SolutionImage';
 
 const SPEED_ICONS = { zap: Zap, 'check-circle': CheckCircle, clock: Clock, 'alert-circle': AlertCircle };
 
@@ -102,7 +103,7 @@ export default function ReviewScreen({ submission: sub, onBackToSummary, onClose
                 <div className="card2 rounded-xl p-4 text-sm muted">
                   <p className="mb-1"><b className="text-emerald-400">Correct Answer:</b> {q.correct}. {((Array.isArray(q.options) ? q.options : []).find((o) => o.key === q.correct) || {}).textEn || ''}</p>
                   <p>{q.explanation || 'No explanation provided for this question.'}</p>
-                  {q.solutionImg && <img src={q.solutionImg} className="mt-2 rounded-lg max-h-52" alt="Solution" />}
+                  {q.solutionImg && <SolutionImage src={q.solutionImg} className="mt-2 rounded-lg max-h-52" alt="Solution" />}
                 </div>
               )}
             </div>
