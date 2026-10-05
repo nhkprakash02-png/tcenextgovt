@@ -19,7 +19,7 @@
 //     components are still pre-rendered on the server in the App Router, where `localStorage`
 //     doesn't exist — reading it during the initial render would both crash SSR and cause a
 //     hydration mismatch. See the `hydrated` flag below for how persistence is gated on it.
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { usePathname } from 'next/navigation';
 import { getRedirectResult, onAuthStateChanged, signOut } from 'firebase/auth';
 import { loadDB, saveDB as persistDB, attachDbRealtimeListeners, writeSubmission, loadBanners } from '../lib/db';
@@ -122,6 +122,23 @@ export function AppProvider({ children }) {
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
   const tabStackRef = useRef(tabStack);
   useEffect(() => { tabStackRef.current = tabStack; }, [tabStack]);
+
+  // Remembers each tab's scroll position and puts it back when you return to that tab, instead
+  // of jumping to the top. A tab you haven't visited yet opens at the top. Switching tabs no
+  // longer calls window.scrollTo anywhere else (setTab / goBack below don't scroll at all).
+  const scrollPosRef = useRef({});
+  const lastScrollTabRef = useRef(activeTab);
+  useEffect(() => {
+    const onScroll = () => { scrollPosRef.current[activeTabRef.current] = window.scrollY; };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+  const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
+  useIsoLayoutEffect(() => {
+    if (lastScrollTabRef.current === activeTab) return;
+    lastScrollTabRef.current = activeTab;
+    window.scrollTo(0, scrollPosRef.current[activeTab] || 0);
+  }, [activeTab]);
 
   useEffect(() => {
     const unsub = attachDbRealtimeListeners(() => dbRef.current, (key, incoming) => {
@@ -273,7 +290,6 @@ export function AppProvider({ children }) {
       setTabStack((stack) => [...stack, prev].slice(-20)); // cap history length
       pushPath(PATH_FOR_TAB[id] || '/');
     }
-    window.scrollTo(0, 0); // instant jump (no slow smooth-scroll animation) as the new view appears
   }, [pushPath]);
 
   const goBack = useCallback(() => {
@@ -283,7 +299,6 @@ export function AppProvider({ children }) {
     activeTabRef.current = nextTab;
     setTabStack((s) => (s.length ? s.slice(0, -1) : s));
     pushPath(path);
-    window.scrollTo(0, 0);
   }, [pushPath]);
 
   // Call after any in-memory DB mutation to persist to Firestore (fire-and-forget, matches
