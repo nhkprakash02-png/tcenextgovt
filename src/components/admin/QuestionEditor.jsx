@@ -26,6 +26,7 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
     const input = e.target;
     const file = input.files && input.files[0];
     if (!file) return;
+    if (rowUploadingId !== null) { try { input.value = ''; } catch (err) { /* ignore */ } return; } // one upload at a time
     // Input is cleared only after the upload finishes (see `finally`) — clearing it first can
     // make some phones lose the picked file before it has been read.
     setRowError({ id: null, msg: '' });
@@ -35,7 +36,7 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
       // clear message, shrinks the photo, saves it in Firestore (no Firebase Storage needed) and
       // returns a short reference to store on the question. Every upload gets a brand-new
       // reference, so a replaced photo never shows a stale cached image.
-      const url = await uploadQuestionSolutionImage(file, { testId: test?.id, subject: test?.subject, questionId: qid + '_' + Date.now().toString(36) });
+      const url = await uploadQuestionSolutionImage(file, { testId: test?.id, subject: test?.subject, questionId: qid + '_' + Date.now().toString(36), getFile: () => input.files && input.files[0] });
       onChangeQuestions((qs) => qs.map((x) => (x.id === qid ? { ...x, solutionImg: url } : x)));
     } catch (err) {
       const msg = err.message || 'Upload failed. Please try again.';
@@ -56,13 +57,14 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
     const input = e.target;
     const file = input.files && input.files[0];
     if (!file) return;
+    if (solImgUploading) { try { input.value = ''; } catch (err) { /* ignore */ } return; } // one upload at a time
     // NOTE: the input is cleared only AFTER the upload finishes (see `finally`). Clearing it
     // straight away can make some phones drop their hold on the picked file before it is read,
     // which caused the intermittent "could not be read as an image" error.
     setSolImgError('');
     setSolImgUploading(true);
     try {
-      const url = await uploadQuestionSolutionImage(file, { testId: test?.id, subject: test?.subject, questionId: uid('qimg') });
+      const url = await uploadQuestionSolutionImage(file, { testId: test?.id, subject: test?.subject, questionId: uid('qimg'), getFile: () => input.files && input.files[0] });
       setForm((f) => ({ ...f, solimg: url }));
     } catch (err) {
       const msg = err.message || 'Upload failed. Please try again.';
@@ -135,7 +137,7 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
             <label className="rounded-lg px-3 py-2 text-xs border flex items-center justify-between cursor-pointer" style={{ borderColor: 'var(--border)' }}>
               <span className="muted">{solImgUploading ? 'Uploading…' : form.solimg ? 'Solution photo ✓ uploaded' : 'Upload solution photo (optional, max 1MB)'}</span>
               {solImgUploading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              <input type="file" accept="image/*" onChange={handleSolutionImageChange} disabled={solImgUploading} className="hidden" />
+              <input type="file" accept="image/*" onChange={handleSolutionImageChange} className="hidden" />
             </label>
             {form.solimg && !solImgUploading && (
               <div className="flex items-center gap-2">
@@ -180,7 +182,7 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
                 className={`cursor-pointer ${q.solutionImg ? 'text-emerald-400' : 'text-sky-400'} ${rowUploadingId === q.id ? 'opacity-60 pointer-events-none' : ''}`}
               >
                 {rowUploadingId === q.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImagePlus className="w-4 h-4" />}
-                <input type="file" accept="image/*" onChange={(e) => handleRowSolutionImage(q.id, e)} disabled={rowUploadingId !== null} className="hidden" />
+                <input type="file" accept="image/*" onChange={(e) => handleRowSolutionImage(q.id, e)} className="hidden" />
               </label>
               <button onClick={() => editQuestion(q.id)} className="text-amber-400"><Pencil className="w-4 h-4" /></button>
               <button onClick={() => deleteQuestion(q.id)} className="text-red-400"><Trash2 className="w-4 h-4" /></button>
