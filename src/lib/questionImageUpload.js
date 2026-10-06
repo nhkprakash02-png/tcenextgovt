@@ -17,6 +17,14 @@
 // document over 1MB — so Base64 inside questions would make big tests impossible to submit.
 // It would also make every visitor download every photo on every page load. With a reference,
 // the photo is fetched only when a student opens "View Solution" (see SolutionImage.jsx).
+//
+// FIX (intermittent "could not be read as an image"): phones hand the browser a reference to
+// the picked file (often a gallery/cloud/camera item), not the file's bytes, and that reference
+// can stop working a moment later — which is why picking the same photo sometimes worked on a
+// second try. The file's bytes are now copied into memory FIRST (with retries), and everything
+// after that works on the in-memory copy. Decoding also tries several methods in turn, the real
+// file type is detected from the file's own first bytes (some phones report none/the wrong one),
+// and every step is logged to the browser console under "[solution-photo]" for debugging.
 import { writeKeyValue, readKeyValue } from './db';
 import { uid } from './utils';
 import { validateSourcePhoto } from './imageUtils';
@@ -26,40 +34,125 @@ const KEY_PREFIX = 'solimg_';
 const MAX_DIMENSION = 1280;          // longest side, in pixels, after shrinking (sharp enough to read on phones)
 const MAX_STORED_CHARS = 300000;     // ~225 KB of image; keeps Firestore reads/writes light
 const SAVE_TIMEOUT_MS = 20000;
+const log = (...args) => { try { console.info('[solution-photo]', ...args); } catch (e) { /* ignore */ } };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export const isSolutionImageRef = (v) => typeof v === 'string' && v.startsWith(REF_PREFIX);
 
-function loadImageElement(file) {
+// ---- 1. Copy the file's bytes into memory (retrying, because phone file handles can flake) ----
+function readWithFileReader(file) {
   return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
+    const fr = new FileReader();
+    fr.onload = () => resolve(new Uint8Array(fr.result));
+    fr.onerror = () => reject(fr.error || new Error('FileReader failed'));
+    fr.readAsArrayBuffer(file);
+  });
+}
+async function readBytes(file) {
+  let lastErr;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      if (typeof file.arrayBuffer === 'function') return new Uint8Array(await file.arrayBuffer());
+      return await readWithFileReader(file);
+    } catch (e) {
+      lastErr = e;
+      log('reading the file failed, attempt', attempt, e && e.name);
+      try { return await readWithFileReader(file); } catch (e2) { lastErr = e2; }
+      await sleep(300);
+    }
+  }
+  throw lastErr || new Error('Could not read the file');
+}
+
+// ---- 2. Work out what the file really is, from its first bytes ----
+const ascii = (b, from, to) => String.fromCharCode(...Array.from(b.slice(from, to)));
+function sniffMime(b) {
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b.length >= 8 && b[0] === 0x89 && ascii(b, 1, 4) === 'PNG') return 'image/png';
+  if (b.length >= 12 && ascii(b, 0, 4) === 'RIFF' && ascii(b, 8, 12) === 'WEBP') return 'image/webp';
+  if (b.length >= 6 && ascii(b, 0, 3) === 'GIF') return 'image/gif';
+  if (b.length >= 2 && ascii(b, 0, 2) === 'BM') return 'image/bmp';
+  if (b.length >= 12 && ascii(b, 4, 8) === 'ftyp') {
+    const brand = ascii(b, 8, 12);
+    if (/^(heic|heix|hevc|hevx|heim|heis|mif1|msf1)/.test(brand)) return 'image/heic';
+    if (brand === 'avif' || brand === 'avis') return 'image/avif';
+  }
+  return '';
+}
+
+// ---- 3. Decode the image, trying several methods ----
+function imageFromUrl(url) {
+  return new Promise((resolve, reject) => {
     const img = new Image();
-    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('That file could not be read as an image. Please choose a JPG or PNG photo.')); };
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('img load error'));
     img.src = url;
   });
 }
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = () => reject(fr.error || new Error('data URL read failed'));
+    fr.readAsDataURL(blob);
+  });
+}
+async function decodeImage(blob) {
+  const tried = [];
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bmp = await createImageBitmap(blob, { imageOrientation: 'from-image' });
+      return { source: bmp, width: bmp.width, height: bmp.height, method: 'bitmap' };
+    } catch (e) { tried.push('bitmap+orientation: ' + (e && e.name)); }
+    try {
+      const bmp = await createImageBitmap(blob);
+      return { source: bmp, width: bmp.width, height: bmp.height, method: 'bitmap-plain' };
+    } catch (e) { tried.push('bitmap: ' + (e && e.name)); }
+  }
+  try {
+    const url = URL.createObjectURL(blob);
+    try {
+      const img = await imageFromUrl(url);
+      return { source: img, width: img.naturalWidth, height: img.naturalHeight, method: 'img-objecturl' };
+    } finally { URL.revokeObjectURL(url); }
+  } catch (e) { tried.push('img+objectURL'); }
+  try {
+    const img = await imageFromUrl(await blobToDataUrl(blob));
+    return { source: img, width: img.naturalWidth, height: img.naturalHeight, method: 'img-dataurl' };
+  } catch (e) { tried.push('img+dataURL'); }
+  const err = new Error('decode failed');
+  err.tried = tried;
+  throw err;
+}
 
 // Shrinks the photo and returns a JPEG data URL under MAX_STORED_CHARS.
-async function compressToDataUrl(file) {
-  const img = await loadImageElement(file);
-  let scale = Math.min(1, MAX_DIMENSION / Math.max(img.naturalWidth, img.naturalHeight));
+async function compressToDataUrl(decoded) {
+  const { source, width: srcW, height: srcH } = decoded;
+  if (!srcW || !srcH) throw new Error('That photo has no readable size. Please choose a different photo.');
+  let scale = Math.min(1, MAX_DIMENSION / Math.max(srcW, srcH));
   let dataUrl = '';
-  for (let attempt = 0; attempt < 6; attempt++) {
-    const w = Math.max(1, Math.round(img.naturalWidth * scale));
-    const h = Math.max(1, Math.round(img.naturalHeight * scale));
-    const canvas = document.createElement('canvas');
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high'; // cleaner text when a large photo is scaled down
-    ctx.fillStyle = '#ffffff'; // PNGs with transparency would otherwise turn black as JPEG
-    ctx.fillRect(0, 0, w, h);
-    ctx.drawImage(img, 0, 0, w, h);
-    for (let quality = 0.85; quality >= 0.4; quality -= 0.1) {
-      dataUrl = canvas.toDataURL('image/jpeg', quality);
-      if (dataUrl.length <= MAX_STORED_CHARS) return dataUrl;
+  try {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const w = Math.max(1, Math.round(srcW * scale));
+      const h = Math.max(1, Math.round(srcH * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Your browser could not prepare the photo. Please try again.');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high'; // cleaner text when a large photo is scaled down
+      ctx.fillStyle = '#ffffff'; // PNGs with transparency would otherwise turn black as JPEG
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(source, 0, 0, w, h);
+      for (let quality = 0.85; quality >= 0.4; quality -= 0.1) {
+        dataUrl = canvas.toDataURL('image/jpeg', quality);
+        if (!dataUrl.startsWith('data:image/jpeg')) throw new Error('Your browser could not compress the photo. Please try a smaller photo.');
+        if (dataUrl.length <= MAX_STORED_CHARS) return dataUrl;
+      }
+      scale *= 0.8; // still too big at the lowest quality — make it smaller and try again
     }
-    scale *= 0.8; // still too big at the lowest quality — make it smaller and try again
+  } finally {
+    if (source && typeof source.close === 'function') { try { source.close(); } catch (e) { /* ignore */ } }
   }
   throw new Error('This photo is too detailed to store. Please choose a simpler or smaller photo.');
 }
@@ -75,10 +168,37 @@ function explainError(err) {
 // Same name and arguments as before, so QuestionEditor calls it exactly as it always did.
 // Returns the reference string to store on the question as `solutionImg`.
 export async function uploadQuestionSolutionImage(file /*, { testId, subject, questionId } */) {
-  const validationError = validateSourcePhoto(file);
+  if (!file) throw new Error('No file selected.');
+  log('selected', { name: file.name, type: file.type || '(none)', sizeKB: Math.round(file.size / 1024) });
+
+  // Size/type rule (under 1MB). Some phones report an empty type, so that case is judged by the
+  // file's real contents below instead of being rejected here.
+  const validationError = validateSourcePhoto({ type: file.type || 'image/jpeg', size: file.size });
   if (validationError) throw new Error(validationError);
+
   try {
-    const dataUrl = await compressToDataUrl(file);
+    // Copy the bytes first, before anything else touches the phone's file handle.
+    let bytes;
+    try { bytes = await readBytes(file); } catch (e) {
+      throw new Error('The phone would not let the browser read that file. Pick the photo again (try choosing it from Gallery or Files rather than straight from the camera), then retry.');
+    }
+    const sniffed = sniffMime(bytes);
+    const realType = sniffed || (file.type && file.type.startsWith('image/') ? file.type : '');
+    log('detected type', { sniffed: sniffed || '(unknown)', bytes: bytes.length });
+    if (!realType) throw new Error('That file is not a photo. Please choose a JPG or PNG image.');
+    if (realType === 'image/heic' || realType === 'image/heif') {
+      throw new Error('This is an iPhone-style HEIC photo, which browsers cannot read. Switch the camera format to JPEG/"Most compatible", or take a screenshot of the photo and upload that.');
+    }
+
+    const blob = new Blob([bytes], { type: realType });
+    let decoded;
+    try { decoded = await decodeImage(blob); } catch (e) {
+      log('could not decode', { type: realType, sizeKB: Math.round(file.size / 1024), tried: e && e.tried });
+      throw new Error(`The photo (${realType}, ${Math.round(file.size / 1024)} KB) could not be opened by this browser. Try taking a screenshot of it and uploading the screenshot, or pick a different photo.`);
+    }
+    log('decoded using', decoded.method, `${decoded.width}x${decoded.height}`);
+
+    const dataUrl = await compressToDataUrl(decoded);
     const id = uid('si');
     // Firestore writes never finish while the device is offline, so cap the wait.
     await Promise.race([
@@ -86,6 +206,7 @@ export async function uploadQuestionSolutionImage(file /*, { testId, subject, qu
       new Promise((_, reject) => setTimeout(() => reject(new Error('Saving the photo timed out. Please check your internet connection and try again.')), SAVE_TIMEOUT_MS)),
     ]);
     cache.set(REF_PREFIX + id, dataUrl);
+    log('saved', REF_PREFIX + id, `${Math.round(dataUrl.length / 1024)} KB`);
     return REF_PREFIX + id;
   } catch (err) {
     throw new Error(explainError(err));
@@ -103,4 +224,4 @@ export async function loadSolutionImage(value) {
   if (!dataUrl) throw new Error('Solution photo not found.');
   cache.set(value, dataUrl);
   return dataUrl;
-      }
+}
