@@ -6,7 +6,7 @@ import { useApp } from '../context/AppContext';
 import { TABS } from '../lib/utils';
 
 export default function Footer() {
-  const { setTab, openModal } = useApp();
+  const { setTab } = useApp();
   return (
     <footer className="mt-10" style={{ borderTop: '1px solid var(--border)', background: 'var(--panel)' }}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
@@ -53,7 +53,6 @@ export default function Footer() {
             loading="lazy"
             referrerPolicy="no-referrer-when-downgrade"
           />
-          <button onClick={() => openModal('adminLogin')} className="text-xs muted underline">Admin Login</button>
         </div>
       </div>
       <div className="text-center text-xs muted pb-6">© 2026 TCE - The Competitive Edge. All rights reserved.</div>
