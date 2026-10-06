@@ -23,9 +23,11 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
   const [rowError, setRowError] = useState({ id: null, msg: '' });
 
   const handleRowSolutionImage = async (qid, e) => {
-    const file = e.target.files && e.target.files[0];
-    e.target.value = ''; // lets the admin re-pick the same file after a failed attempt
+    const input = e.target;
+    const file = input.files && input.files[0];
     if (!file) return;
+    // Input is cleared only after the upload finishes (see `finally`) — clearing it first can
+    // make some phones lose the picked file before it has been read.
     setRowError({ id: null, msg: '' });
     setRowUploadingId(qid);
     try {
@@ -41,6 +43,7 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
       alert('Solution photo upload failed:\n\n' + msg);
     } finally {
       setRowUploadingId(null);
+      try { input.value = ''; } catch (err) { /* ignore */ } // lets the admin re-pick the same file
     }
   };
 
@@ -50,9 +53,12 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
   };
 
   const handleSolutionImageChange = async (e) => {
-    const file = e.target.files && e.target.files[0];
-    e.target.value = ''; // allow re-selecting the same file name after a failed/cleared attempt
+    const input = e.target;
+    const file = input.files && input.files[0];
     if (!file) return;
+    // NOTE: the input is cleared only AFTER the upload finishes (see `finally`). Clearing it
+    // straight away can make some phones drop their hold on the picked file before it is read,
+    // which caused the intermittent "could not be read as an image" error.
     setSolImgError('');
     setSolImgUploading(true);
     try {
@@ -64,6 +70,7 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
       alert('Solution photo upload failed:\n\n' + msg);
     } finally {
       setSolImgUploading(false);
+      try { input.value = ''; } catch (err) { /* ignore */ } // allow re-selecting the same file
     }
   };
 
