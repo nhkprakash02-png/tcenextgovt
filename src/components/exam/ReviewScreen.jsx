@@ -20,25 +20,49 @@ export default function ReviewScreen({ submission: sub, onBackToSummary, onClose
   useLockBodyScroll(true);
   const displayTitle = liveSubmissionTitle(DB, sub);
 
-  const correctCount = sub.detail.filter((d) => d.given && d.given === d.q.correct).length;
-  const incorrectCount = sub.detail.filter((d) => d.given && d.given !== d.q.correct).length;
-  const unattemptedCount = sub.detail.filter((d) => !d.given).length;
+  // Live solution photos / explanations: the result a student saved is a snapshot of the
+  // questions as they were on the day of the attempt, so a solution photo added (or an
+  // explanation fixed) afterwards would never show up on old attempts. Here each saved question
+  // is matched by id with the same question in the current test and only its solution photo and
+  // explanation are taken from there. The recorded answers, scores and each question's options
+  // and correct answer stay exactly as saved, so old results never change. If the test or the
+  // question no longer exists, the saved copy is shown as before.
+  const liveQuestionsById = useMemo(() => {
+    let liveTest = null;
+    if (sub.testType === 'mock' && sub.subject && DB.mockTests && DB.mockTests[sub.subject]) {
+      liveTest = DB.mockTests[sub.subject].find((t) => t.id === sub.testId);
+    } else if (sub.testType === 'pyq' && DB.pyqSets) {
+      liveTest = DB.pyqSets.find((t) => t.id === sub.testId);
+    }
+    const map = {};
+    if (liveTest && Array.isArray(liveTest.questions)) liveTest.questions.forEach((lq) => { map[lq.id] = lq; });
+    return map;
+  }, [DB.mockTests, DB.pyqSets, sub.testType, sub.subject, sub.testId]);
+  const detail = useMemo(() => sub.detail.map((dd) => {
+    const live = dd && dd.q ? liveQuestionsById[dd.q.id] : null;
+    if (!live) return dd;
+    return { ...dd, q: { ...dd.q, solutionImg: live.solutionImg || '', explanation: live.explanation || '' } };
+  }), [sub.detail, liveQuestionsById]);
+
+  const correctCount = detail.filter((d) => d.given && d.given === d.q.correct).length;
+  const incorrectCount = detail.filter((d) => d.given && d.given !== d.q.correct).length;
+  const unattemptedCount = detail.filter((d) => !d.given).length;
 
   const goTo = (idx) => {
-    setCurrent(Math.max(0, Math.min(idx, sub.detail.length - 1)));
+    setCurrent(Math.max(0, Math.min(idx, detail.length - 1)));
     setViewMode('single'); setShowSolution(false); setPaletteOpen(false);
   };
 
-  const d = sub.detail[current];
+  const d = detail[current];
   const q = d.q;
   const attempted = !!d.given;
   const isCorrect = attempted && d.given === q.correct;
   const statusLabel = !attempted ? 'Skipped' : (isCorrect ? 'Correct' : 'Incorrect');
   const statusColor = !attempted ? 'bg-gray-500' : (isCorrect ? 'bg-emerald-500' : 'bg-red-500');
-  const expectedPerQ = sub.durationSec ? sub.durationSec / sub.detail.length : 60;
+  const expectedPerQ = sub.durationSec ? sub.durationSec / detail.length : 60;
   const speed = classifySpeed(d.timeSpent || 0, expectedPerQ, isCorrect, attempted);
   const communityPct = useMemo(() => computeCommunityAccuracy(DB.submissions, sub.testId, q.id, DB.students), [DB.submissions, sub.testId, q.id, DB.students]);
-  const marksCorrectPerQ = +((sub.maxScore || 0) / (sub.detail.length || 1)).toFixed(2);
+  const marksCorrectPerQ = +((sub.maxScore || 0) / (detail.length || 1)).toFixed(2);
   const localSel = localAnswers[current];
   const SpeedIcon = speed ? SPEED_ICONS[speed.icon] : null;
 
@@ -58,7 +82,7 @@ export default function ReviewScreen({ submission: sub, onBackToSummary, onClose
             <div className="max-w-2xl mx-auto">
               <h3 className="font-display font-700 text-lg mb-4">{displayTitle} — Full Question Paper</h3>
               <div className="space-y-5">
-                {sub.detail.map((dd, i) => (
+                {detail.map((dd, i) => (
                   <div key={i} className="card2 rounded-xl p-4">
                     <p className="text-sm font-medium mb-2">{i + 1}. {dd.q.textEn}</p>
                     <div className="grid sm:grid-cols-2 gap-2">
@@ -135,7 +159,7 @@ export default function ReviewScreen({ submission: sub, onBackToSummary, onClose
           </div>
           <p className="text-xs font-bold muted uppercase mb-2">Section: {sectionDisplayName(sub.subject)}</p>
           <div className="grid grid-cols-5 gap-2 mb-4">
-            {sub.detail.map((dd, i) => {
+            {detail.map((dd, i) => {
               const att = !!dd.given;
               const corr = att && dd.given === dd.q.correct;
               const cls = !att ? 'bg-gray-500 text-white' : (corr ? 'bg-emerald-500 text-ink' : 'bg-red-500 text-white');
@@ -165,4 +189,4 @@ export default function ReviewScreen({ submission: sub, onBackToSummary, onClose
       </div>
     </div>
   );
-}
+                      }
