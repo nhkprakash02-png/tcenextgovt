@@ -123,6 +123,26 @@ export function AppProvider({ children }) {
   const tabStackRef = useRef(tabStack);
   useEffect(() => { tabStackRef.current = tabStack; }, [tabStack]);
 
+  // Always start from Home after a page reload or when the browser re-opens the page after the
+  // app was closed / cleared from memory (the browser reports those loads as "reload" or
+  // "back_forward"). A normal open — typing the address, tapping a link or a shared /test/...
+  // link, or a Google result — is a "navigate" load and is deliberately left alone, so those
+  // links still land where they point. Runs once per page load; the short timeout lets Next.js
+  // finish setting up its own history handling first so the URL change stays in sync with it.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        const nav = (performance.getEntriesByType('navigation') || [])[0];
+        const type = nav ? nav.type : (performance.navigation && performance.navigation.type === 1 ? 'reload' : 'navigate');
+        if ((type === 'reload' || type === 'back_forward') && window.location.pathname !== '/') {
+          window.history.replaceState(null, '', '/');
+          setDeepLinkTestId(null); // don't auto-open a test from a /test/... link we just left
+        }
+      } catch (e) { /* ignore */ }
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+
   // Remembers each tab's scroll position and puts it back when you return to that tab, instead
   // of jumping to the top. A tab you haven't visited yet opens at the top. Switching tabs no
   // longer calls window.scrollTo anywhere else (setTab / goBack below don't scroll at all).
