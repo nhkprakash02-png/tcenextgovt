@@ -18,13 +18,15 @@
 // It would also make every visitor download every photo on every page load. With a reference,
 // the photo is fetched only when a student opens "View Solution" (see SolutionImage.jsx).
 //
-// FIX (intermittent "could not be read as an image"): phones hand the browser a reference to
-// the picked file (often a gallery/cloud/camera item), not the file's bytes, and that reference
-// can stop working a moment later — which is why picking the same photo sometimes worked on a
-// second try. The file's bytes are now copied into memory FIRST (with retries), and everything
-// after that works on the in-memory copy. Decoding also tries several methods in turn, the real
-// file type is detected from the file's own first bytes (some phones report none/the wrong one),
-// and every step is logged to the browser console under "[solution-photo]" for debugging.
+// FIX (photo only uploads on the 2nd try): phones hand the browser a reference to the picked
+// file (a gallery/cloud/camera item), not the file's bytes, and right after coming back from the
+// picker that reference is sometimes not readable yet — but is a moment later, which is exactly
+// why picking the same photo again worked. The file's bytes are now copied into memory FIRST,
+// after a short pause, using five different reading methods in turn with up to ~6 seconds of
+// patient retries (re-fetching the file from the picker each time), and everything after that
+// works on the in-memory copy. Decoding also tries several methods, the real file type is
+// detected from the file's own first bytes (some phones report none/the wrong one), and every
+// step is logged to the browser console under "[solution-photo]" for debugging.
 import { writeKeyValue, readKeyValue } from './db';
 import { uid } from './utils';
 import { validateSourcePhoto } from './imageUtils';
@@ -48,17 +50,36 @@ function readWithFileReader(file) {
     fr.readAsArrayBuffer(file);
   });
 }
-async function readBytes(file) {
+const READERS = [
+  (f) => (typeof f.arrayBuffer === 'function' ? f.arrayBuffer() : readWithFileReader(f)),
+  (f) => readWithFileReader(f),
+  (f) => (typeof Response === 'function' ? new Response(f).arrayBuffer() : readWithFileReader(f)),
+  (f) => (typeof f.slice === 'function' && typeof f.arrayBuffer === 'function' ? f.slice(0, f.size, f.type).arrayBuffer() : readWithFileReader(f)),
+  async (f) => {
+    const u = URL.createObjectURL(f);
+    try { return await (await fetch(u)).arrayBuffer(); } finally { URL.revokeObjectURL(u); }
+  },
+];
+const RETRY_DELAYS_MS = [200, 400, 600, 900, 1200, 1500, 1800]; // 8 attempts, ~6.6s in total
+async function readBytes(file, getFile) {
+  await sleep(250); // let the browser settle after returning from the phone's photo picker
   let lastErr;
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= RETRY_DELAYS_MS.length + 1; attempt++) {
+    // From the 2nd attempt on, ask the file input for a fresh handle to the picked file.
+    let f = file;
+    if (attempt > 1 && typeof getFile === 'function') { try { f = getFile() || file; } catch (e) { f = file; } }
     try {
-      if (typeof file.arrayBuffer === 'function') return new Uint8Array(await file.arrayBuffer());
-      return await readWithFileReader(file);
+      const buf = await READERS[(attempt - 1) % READERS.length](f);
+      const bytes = new Uint8Array(buf);
+      if (bytes.length > 0) {
+        if (attempt > 1) log('file read succeeded on attempt', attempt);
+        return bytes;
+      }
+      throw new Error('read returned 0 bytes');
     } catch (e) {
       lastErr = e;
-      log('reading the file failed, attempt', attempt, e && e.name);
-      try { return await readWithFileReader(file); } catch (e2) { lastErr = e2; }
-      await sleep(300);
+      log('reading the file failed, attempt', attempt, e && (e.name || e.message));
+      if (attempt <= RETRY_DELAYS_MS.length) await sleep(RETRY_DELAYS_MS[attempt - 1]);
     }
   }
   throw lastErr || new Error('Could not read the file');
@@ -167,7 +188,7 @@ function explainError(err) {
 
 // Same name and arguments as before, so QuestionEditor calls it exactly as it always did.
 // Returns the reference string to store on the question as `solutionImg`.
-export async function uploadQuestionSolutionImage(file /*, { testId, subject, questionId } */) {
+export async function uploadQuestionSolutionImage(file, options = {} /* { testId, subject, questionId, getFile } */) {
   if (!file) throw new Error('No file selected.');
   log('selected', { name: file.name, type: file.type || '(none)', sizeKB: Math.round(file.size / 1024) });
 
@@ -179,8 +200,8 @@ export async function uploadQuestionSolutionImage(file /*, { testId, subject, qu
   try {
     // Copy the bytes first, before anything else touches the phone's file handle.
     let bytes;
-    try { bytes = await readBytes(file); } catch (e) {
-      throw new Error('The phone would not let the browser read that file. Pick the photo again (try choosing it from Gallery or Files rather than straight from the camera), then retry.');
+    try { bytes = await readBytes(file, options.getFile); } catch (e) {
+      throw new Error('The phone would not let the browser read that file even after several tries. Pick the photo again (try choosing it from Gallery or Files rather than straight from the camera), then retry.');
     }
     const sniffed = sniffMime(bytes);
     const realType = sniffed || (file.type && file.type.startsWith('image/') ? file.type : '');
