@@ -5,8 +5,8 @@
 //
 // How it works:
 //  1. The admin's photo is validated (image, under 1MB — same rule as profile photos, via
-//     validateSourcePhoto), then shrunk in the browser (max 1000px wide/tall, JPEG) until it is
-//     small — normally 40-150 KB.
+//     validateSourcePhoto), then shrunk in the browser (max 1280px wide/tall, JPEG, keeping its
+//     own aspect ratio) until it is small — normally 60-220 KB.
 //  2. The resulting Base64 text is saved as its OWN small Firestore document,
 //     tce_app_data/solimg_<id> (same collection and same read/write helpers the rest of the app
 //     already uses, so no new Firestore rules are needed).
@@ -23,8 +23,8 @@ import { validateSourcePhoto } from './imageUtils';
 
 const REF_PREFIX = 'fsimg:';
 const KEY_PREFIX = 'solimg_';
-const MAX_DIMENSION = 1000;          // longest side, in pixels, after shrinking
-const MAX_STORED_CHARS = 220000;     // ~160 KB of image; keeps Firestore reads/writes light
+const MAX_DIMENSION = 1280;          // longest side, in pixels, after shrinking (sharp enough to read on phones)
+const MAX_STORED_CHARS = 300000;     // ~225 KB of image; keeps Firestore reads/writes light
 const SAVE_TIMEOUT_MS = 20000;
 
 export const isSolutionImageRef = (v) => typeof v === 'string' && v.startsWith(REF_PREFIX);
@@ -50,10 +50,12 @@ async function compressToDataUrl(file) {
     const canvas = document.createElement('canvas');
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high'; // cleaner text when a large photo is scaled down
     ctx.fillStyle = '#ffffff'; // PNGs with transparency would otherwise turn black as JPEG
     ctx.fillRect(0, 0, w, h);
     ctx.drawImage(img, 0, 0, w, h);
-    for (let quality = 0.8; quality >= 0.4; quality -= 0.1) {
+    for (let quality = 0.85; quality >= 0.4; quality -= 0.1) {
       dataUrl = canvas.toDataURL('image/jpeg', quality);
       if (dataUrl.length <= MAX_STORED_CHARS) return dataUrl;
     }
@@ -101,4 +103,4 @@ export async function loadSolutionImage(value) {
   if (!dataUrl) throw new Error('Solution photo not found.');
   cache.set(value, dataUrl);
   return dataUrl;
-}
+      }
