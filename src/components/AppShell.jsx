@@ -19,12 +19,9 @@ import Footer from './Footer';
 import Ticker from './Ticker';
 import HeroCarousel from './HeroCarousel';
 import Mentors from './Mentors';
-import Modal from './Modal';
 import BackButton from './BackButton';
 import AuthModal, { GoogleRegisterModal } from './AuthModal';
 import EnrollModal from './EnrollModal';
-import AdminLoginModal from './AdminLoginModal';
-import AdminPanel from '../views/AdminPanel';
 import Home from '../views/Home';
 import MockTest from '../views/MockTest';
 import Quiz from '../views/Quiz';
@@ -98,12 +95,6 @@ export default function AppShell({ children }) {
       {modal?.type === 'login' && <AuthModal />}
       {modal?.type === 'googleRegister' && <GoogleRegisterModal {...modal.props} />}
       {modal?.type === 'enroll' && <EnrollModal {...modal.props} />}
-      {modal?.type === 'adminLogin' && <AdminLoginModal />}
-      {modal?.type === 'adminPanel' && (
-        <Modal title="Admin Panel" wide>
-          <AdminPanel />
-        </Modal>
-      )}
     </>
   );
 }
