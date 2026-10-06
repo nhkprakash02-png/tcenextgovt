@@ -18,15 +18,17 @@
 // It would also make every visitor download every photo on every page load. With a reference,
 // the photo is fetched only when a student opens "View Solution" (see SolutionImage.jsx).
 //
-// FIX (photo only uploads on the 2nd try): phones hand the browser a reference to the picked
-// file (a gallery/cloud/camera item), not the file's bytes, and right after coming back from the
-// picker that reference is sometimes not readable yet — but is a moment later, which is exactly
-// why picking the same photo again worked. The file's bytes are now copied into memory FIRST,
-// after a short pause, using five different reading methods in turn with up to ~6 seconds of
-// patient retries (re-fetching the file from the picker each time), and everything after that
-// works on the in-memory copy. Decoding also tries several methods, the real file type is
-// detected from the file's own first bytes (some phones report none/the wrong one), and every
-// step is logged to the browser console under "[solution-photo]" for debugging.
+// HOW PICKED PHOTOS ARE READ (the "phone would not let the browser read that file" problem):
+// on Android, the File the picker gives the page is only a short-lived pointer to the photo, and
+// it can stop being readable almost immediately — after a pause, after the page re-renders, or
+// after a few photos in a row. So the very first thing this function does, before any
+// validation, logging or waiting, is start copying the photo's bytes into memory — using three
+// different reading methods at the same moment, taking whichever finishes first. Everything
+// after that (type detection, decoding, shrinking, saving) works on the in-memory copy only.
+// If that instant copy fails, it retries patiently, and as a last resort asks the browser to
+// open the picked File directly. The whole upload also has an overall time limit, so it can
+// never leave the admin screen stuck in an "uploading" state. Every step is logged to the
+// browser console under "[solution-photo]".
 import { writeKeyValue, readKeyValue } from './db';
 import { uid } from './utils';
 import { validateSourcePhoto } from './imageUtils';
@@ -36,50 +38,57 @@ const KEY_PREFIX = 'solimg_';
 const MAX_DIMENSION = 1280;          // longest side, in pixels, after shrinking (sharp enough to read on phones)
 const MAX_STORED_CHARS = 300000;     // ~225 KB of image; keeps Firestore reads/writes light
 const SAVE_TIMEOUT_MS = 20000;
+const OVERALL_TIMEOUT_MS = 60000;    // hard stop for the whole upload so the screen can never stay stuck
 const log = (...args) => { try { console.info('[solution-photo]', ...args); } catch (e) { /* ignore */ } };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export const isSolutionImageRef = (v) => typeof v === 'string' && v.startsWith(REF_PREFIX);
 
-// ---- 1. Copy the file's bytes into memory (retrying, because phone file handles can flake) ----
+// ---- 1. Copy the file's bytes into memory, as fast as possible ----
 function readWithFileReader(file) {
   return new Promise((resolve, reject) => {
     const fr = new FileReader();
-    fr.onload = () => resolve(new Uint8Array(fr.result));
+    fr.onload = () => resolve(fr.result);
     fr.onerror = () => reject(fr.error || new Error('FileReader failed'));
     fr.readAsArrayBuffer(file);
   });
 }
-const READERS = [
-  (f) => (typeof f.arrayBuffer === 'function' ? f.arrayBuffer() : readWithFileReader(f)),
-  (f) => readWithFileReader(f),
-  (f) => (typeof Response === 'function' ? new Response(f).arrayBuffer() : readWithFileReader(f)),
-  (f) => (typeof f.slice === 'function' && typeof f.arrayBuffer === 'function' ? f.slice(0, f.size, f.type).arrayBuffer() : readWithFileReader(f)),
-  async (f) => {
-    const u = URL.createObjectURL(f);
-    try { return await (await fetch(u)).arrayBuffer(); } finally { URL.revokeObjectURL(u); }
-  },
-];
-const RETRY_DELAYS_MS = [200, 400, 600, 900, 1200, 1500, 1800]; // 8 attempts, ~6.6s in total
-async function readBytes(file, getFile) {
-  await sleep(250); // let the browser settle after returning from the phone's photo picker
+const attempt = (fn) => { try { return Promise.resolve(fn()); } catch (e) { return Promise.reject(e); } };
+function firstSuccess(promises) {
+  return new Promise((resolve, reject) => {
+    let failed = 0;
+    let lastErr;
+    promises.forEach((p) => p.then(resolve, (e) => { lastErr = e; failed += 1; if (failed === promises.length) reject(lastErr); }));
+  });
+}
+const toBytes = (buf) => {
+  const bytes = new Uint8Array(buf);
+  if (!bytes.length) throw new Error('read returned 0 bytes');
+  return bytes;
+};
+// Starts every reading method at once and resolves with the first one that works.
+function startReading(file) {
+  return firstSuccess([
+    attempt(() => (typeof file.arrayBuffer === 'function' ? file.arrayBuffer() : Promise.reject(new Error('no arrayBuffer')))),
+    attempt(() => readWithFileReader(file)),
+    attempt(() => (typeof Response === 'function' ? new Response(file).arrayBuffer() : Promise.reject(new Error('no Response')))),
+  ]).then(toBytes);
+}
+// Fallback: patient retries, each time asking the file input for a fresh handle to the file.
+const RETRY_DELAYS_MS = [150, 300, 500, 800, 1200]; // 6 more attempts, ~3s in total
+async function readBytesWithRetry(file, getFile) {
   let lastErr;
-  for (let attempt = 1; attempt <= RETRY_DELAYS_MS.length + 1; attempt++) {
-    // From the 2nd attempt on, ask the file input for a fresh handle to the picked file.
+  for (let n = 1; n <= RETRY_DELAYS_MS.length + 1; n++) {
     let f = file;
-    if (attempt > 1 && typeof getFile === 'function') { try { f = getFile() || file; } catch (e) { f = file; } }
+    if (typeof getFile === 'function') { try { f = getFile() || file; } catch (e) { f = file; } }
     try {
-      const buf = await READERS[(attempt - 1) % READERS.length](f);
-      const bytes = new Uint8Array(buf);
-      if (bytes.length > 0) {
-        if (attempt > 1) log('file read succeeded on attempt', attempt);
-        return bytes;
-      }
-      throw new Error('read returned 0 bytes');
+      const bytes = await startReading(f);
+      log('file read succeeded on retry', n);
+      return bytes;
     } catch (e) {
       lastErr = e;
-      log('reading the file failed, attempt', attempt, e && (e.name || e.message));
-      if (attempt <= RETRY_DELAYS_MS.length) await sleep(RETRY_DELAYS_MS[attempt - 1]);
+      log('retry', n, 'failed to read the file:', e && (e.name || e.message));
+      if (n <= RETRY_DELAYS_MS.length) await sleep(RETRY_DELAYS_MS[n - 1]);
     }
   }
   throw lastErr || new Error('Could not read the file');
@@ -151,12 +160,12 @@ async function compressToDataUrl(decoded) {
   const { source, width: srcW, height: srcH } = decoded;
   if (!srcW || !srcH) throw new Error('That photo has no readable size. Please choose a different photo.');
   let scale = Math.min(1, MAX_DIMENSION / Math.max(srcW, srcH));
-  let dataUrl = '';
+  let canvas = null;
   try {
-    for (let attempt = 0; attempt < 6; attempt++) {
+    for (let pass = 0; pass < 6; pass++) {
       const w = Math.max(1, Math.round(srcW * scale));
       const h = Math.max(1, Math.round(srcH * scale));
-      const canvas = document.createElement('canvas');
+      canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Your browser could not prepare the photo. Please try again.');
@@ -166,13 +175,15 @@ async function compressToDataUrl(decoded) {
       ctx.fillRect(0, 0, w, h);
       ctx.drawImage(source, 0, 0, w, h);
       for (let quality = 0.85; quality >= 0.4; quality -= 0.1) {
-        dataUrl = canvas.toDataURL('image/jpeg', quality);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
         if (!dataUrl.startsWith('data:image/jpeg')) throw new Error('Your browser could not compress the photo. Please try a smaller photo.');
         if (dataUrl.length <= MAX_STORED_CHARS) return dataUrl;
       }
       scale *= 0.8; // still too big at the lowest quality — make it smaller and try again
     }
   } finally {
+    // Free the picture's memory right away, so several uploads in a row don't pile up on a phone.
+    if (canvas) { canvas.width = 0; canvas.height = 0; }
     if (source && typeof source.close === 'function') { try { source.close(); } catch (e) { /* ignore */ } }
   }
   throw new Error('This photo is too detailed to store. Please choose a simpler or smaller photo.');
@@ -186,10 +197,12 @@ function explainError(err) {
   return (err && err.message) || 'Upload failed. Please try again.';
 }
 
-// Same name and arguments as before, so QuestionEditor calls it exactly as it always did.
-// Returns the reference string to store on the question as `solutionImg`.
-export async function uploadQuestionSolutionImage(file, options = {} /* { testId, subject, questionId, getFile } */) {
-  if (!file) throw new Error('No file selected.');
+const READ_FAILED_MSG = 'The phone would not let the browser read that photo. Please pick it again (Gallery or Files works best). If it keeps happening, close other heavy apps or tabs and retry.';
+
+async function runUpload(file, options) {
+  // FIRST: start copying the photo into memory, before anything else can disturb the file handle.
+  const instantRead = startReading(file);
+  instantRead.catch(() => { /* handled below */ });
   log('selected', { name: file.name, type: file.type || '(none)', sizeKB: Math.round(file.size / 1024) });
 
   // Size/type rule (under 1MB). Some phones report an empty type, so that case is judged by the
@@ -197,12 +210,14 @@ export async function uploadQuestionSolutionImage(file, options = {} /* { testId
   const validationError = validateSourcePhoto({ type: file.type || 'image/jpeg', size: file.size });
   if (validationError) throw new Error(validationError);
 
-  try {
-    // Copy the bytes first, before anything else touches the phone's file handle.
-    let bytes;
-    try { bytes = await readBytes(file, options.getFile); } catch (e) {
-      throw new Error('The phone would not let the browser read that file even after several tries. Pick the photo again (try choosing it from Gallery or Files rather than straight from the camera), then retry.');
-    }
+  let bytes = null;
+  try { bytes = await instantRead; } catch (e) {
+    log('instant read failed:', e && (e.name || e.message), '- retrying');
+    try { bytes = await readBytesWithRetry(file, options.getFile); } catch (e2) { bytes = null; }
+  }
+
+  let decoded;
+  if (bytes) {
     const sniffed = sniffMime(bytes);
     const realType = sniffed || (file.type && file.type.startsWith('image/') ? file.type : '');
     log('detected type', { sniffed: sniffed || '(unknown)', bytes: bytes.length });
@@ -210,25 +225,42 @@ export async function uploadQuestionSolutionImage(file, options = {} /* { testId
     if (realType === 'image/heic' || realType === 'image/heif') {
       throw new Error('This is an iPhone-style HEIC photo, which browsers cannot read. Switch the camera format to JPEG/"Most compatible", or take a screenshot of the photo and upload that.');
     }
-
     const blob = new Blob([bytes], { type: realType });
-    let decoded;
     try { decoded = await decodeImage(blob); } catch (e) {
       log('could not decode', { type: realType, sizeKB: Math.round(file.size / 1024), tried: e && e.tried });
       throw new Error(`The photo (${realType}, ${Math.round(file.size / 1024)} KB) could not be opened by this browser. Try taking a screenshot of it and uploading the screenshot, or pick a different photo.`);
     }
-    log('decoded using', decoded.method, `${decoded.width}x${decoded.height}`);
+  } else {
+    // Last resort: the bytes could not be copied, so ask the browser to open the picked File itself.
+    log('could not copy the file bytes; trying to open the picked File directly');
+    if (!file.type || !file.type.startsWith('image/')) throw new Error(READ_FAILED_MSG);
+    try { decoded = await decodeImage(file); } catch (e) { throw new Error(READ_FAILED_MSG); }
+  }
+  log('decoded using', decoded.method, `${decoded.width}x${decoded.height}`);
 
-    const dataUrl = await compressToDataUrl(decoded);
-    const id = uid('si');
-    // Firestore writes never finish while the device is offline, so cap the wait.
-    await Promise.race([
-      writeKeyValue(KEY_PREFIX + id, dataUrl),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Saving the photo timed out. Please check your internet connection and try again.')), SAVE_TIMEOUT_MS)),
+  const dataUrl = await compressToDataUrl(decoded);
+  const id = uid('si');
+  // Firestore writes never finish while the device is offline, so cap the wait.
+  await Promise.race([
+    writeKeyValue(KEY_PREFIX + id, dataUrl),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Saving the photo timed out. Please check your internet connection and try again.')), SAVE_TIMEOUT_MS)),
+  ]);
+  cache.set(REF_PREFIX + id, dataUrl);
+  log('saved', REF_PREFIX + id, `${Math.round(dataUrl.length / 1024)} KB`);
+  return REF_PREFIX + id;
+}
+
+// Same name and arguments as before, so QuestionEditor calls it exactly as it always did.
+// Returns the reference string to store on the question as `solutionImg`.
+export async function uploadQuestionSolutionImage(file, options = {} /* { testId, subject, questionId, getFile } */) {
+  if (!file) throw new Error('No file selected.');
+  try {
+    // NOTE: runUpload() is called straight away (no await before it) so that its first line —
+    // starting to read the photo — runs while the browser is still handling the "photo picked" event.
+    return await Promise.race([
+      runUpload(file, options),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('The upload took too long and was stopped. Please try again.')), OVERALL_TIMEOUT_MS)),
     ]);
-    cache.set(REF_PREFIX + id, dataUrl);
-    log('saved', REF_PREFIX + id, `${Math.round(dataUrl.length / 1024)} KB`);
-    return REF_PREFIX + id;
   } catch (err) {
     throw new Error(explainError(err));
   }
