@@ -6,7 +6,7 @@ import { isSolutionImageRef, loadSolutionImage } from '../lib/questionImageUploa
 // Shows a question's solution photo. `src` is whatever is stored in the question's
 // `solutionImg`: either an old-style link/Base64 (shown straight away) or an "fsimg:<id>"
 // reference that is fetched from Firestore only now, when this is actually on screen.
-export default function SolutionImage({ src, alt = 'Solution', className = '', style }) {
+export default function SolutionImage({ src, alt = 'Solution', className = '', placeholderClassName = '', style }) {
   const [resolved, setResolved] = useState(() => (isSolutionImageRef(src) ? '' : src || ''));
   const [status, setStatus] = useState(isSolutionImageRef(src) ? 'loading' : 'ok');
 
@@ -22,7 +22,7 @@ export default function SolutionImage({ src, alt = 'Solution', className = '', s
 
   if (status === 'ok' && resolved) return <img src={resolved} alt={alt} className={className} style={style} />;
   return (
-    <div className={`${className} overflow-hidden muted text-[10px] flex items-center justify-center`} style={style} title={status === 'error' ? 'Solution photo could not be loaded' : 'Loading photo…'}>
+    <div className={`${className} ${placeholderClassName} overflow-hidden muted text-[10px] flex items-center justify-center`} style={style} title={status === 'error' ? 'Solution photo could not be loaded' : 'Loading photo…'}>
       {status === 'error' ? '!' : '…'}
     </div>
   );
