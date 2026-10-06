@@ -21,6 +21,10 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
   // questions too). Tracks which question is uploading and which one last failed, with why.
   const [rowUploadingId, setRowUploadingId] = useState(null);
   const [rowError, setRowError] = useState({ id: null, msg: '' });
+  // Bumped after every upload (success or failure) to give each file picker a brand-new input
+  // element. Phones can keep stale state on a reused file input, which made later uploads in a
+  // row fail; a fresh element for every pick avoids that.
+  const [inputKey, setInputKey] = useState(0);
 
   const handleRowSolutionImage = async (qid, e) => {
     const input = e.target;
@@ -45,6 +49,7 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
     } finally {
       setRowUploadingId(null);
       try { input.value = ''; } catch (err) { /* ignore */ } // lets the admin re-pick the same file
+      setInputKey((k) => k + 1);
     }
   };
 
@@ -73,6 +78,7 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
     } finally {
       setSolImgUploading(false);
       try { input.value = ''; } catch (err) { /* ignore */ } // allow re-selecting the same file
+      setInputKey((k) => k + 1);
     }
   };
 
@@ -137,7 +143,7 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
             <label className="rounded-lg px-3 py-2 text-xs border flex items-center justify-between cursor-pointer" style={{ borderColor: 'var(--border)' }}>
               <span className="muted">{solImgUploading ? 'Uploading…' : form.solimg ? 'Solution photo ✓ uploaded' : 'Upload solution photo (optional, max 1MB)'}</span>
               {solImgUploading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              <input type="file" accept="image/*" onChange={handleSolutionImageChange} className="hidden" />
+              <input key={'solform-' + inputKey} type="file" accept="image/*" onChange={handleSolutionImageChange} className="hidden" />
             </label>
             {form.solimg && !solImgUploading && (
               <div className="flex items-center gap-2">
@@ -182,7 +188,7 @@ export default function QuestionEditor({ test, onChangeQuestions }) {
                 className={`cursor-pointer ${q.solutionImg ? 'text-emerald-400' : 'text-sky-400'} ${rowUploadingId === q.id ? 'opacity-60 pointer-events-none' : ''}`}
               >
                 {rowUploadingId === q.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImagePlus className="w-4 h-4" />}
-                <input type="file" accept="image/*" onChange={(e) => handleRowSolutionImage(q.id, e)} className="hidden" />
+                <input key={'sol-' + q.id + '-' + inputKey} type="file" accept="image/*" onChange={(e) => handleRowSolutionImage(q.id, e)} className="hidden" />
               </label>
               <button onClick={() => editQuestion(q.id)} className="text-amber-400"><Pencil className="w-4 h-4" /></button>
               <button onClick={() => deleteQuestion(q.id)} className="text-red-400"><Trash2 className="w-4 h-4" /></button>
