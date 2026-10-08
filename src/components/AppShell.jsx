@@ -53,11 +53,6 @@ function useInstallPrompt() {
   return { canInstall: !!deferred, trigger };
 }
 
-// Official TCE WhatsApp Business number (digits only, with country code, e.g. 919876543210).
-// Set NEXT_PUBLIC_WHATSAPP_BUSINESS_NUMBER in Vercel; until then the old number keeps working.
-const WA_BUSINESS_NUMBER = process.env.NEXT_PUBLIC_WHATSAPP_BUSINESS_NUMBER || '919749587349';
-const WA_SUPPORT_HREF = `https://wa.me/${WA_BUSINESS_NUMBER}?text=${encodeURIComponent('Hello TCE Nahata, I want to know more about courses and support.')}`;
-
 export default function AppShell({ children }) {
   const { activeTab, modal } = useApp();
   const { canInstall, trigger } = useInstallPrompt();
@@ -89,7 +84,7 @@ export default function AppShell({ children }) {
           </button>
         )}
         <a
-          href={WA_SUPPORT_HREF}
+          href="https://wa.me/919749587349?text=Hello%20Sir%2C%20I%20want%20to%20know%20more%20about%20TCE%20batches"
           target="_blank" rel="noreferrer"
           className="flex items-center gap-2 px-4 py-3 rounded-full bg-[#25D366] text-white shadow-lg text-xs font-bold"
         >
