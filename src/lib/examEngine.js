@@ -38,7 +38,9 @@ export function clearExamProgress(userId) {
 
 // Builds the initial exam state for a fresh attempt (mirrors beginExam()).
 export function createExamState(test, source, subject, chosenLang) {
-  const shuffledQ = shuffle(test.questions);
+  // Offline / OMR mocks arrive with `fixedOrder` set: the question order must match the printed
+  // booklet, so they are NOT shuffled. Every other test shuffles exactly as before.
+  const shuffledQ = test.fixedOrder ? test.questions.slice() : shuffle(test.questions);
   const status = new Array(shuffledQ.length).fill('not-visited');
   status[0] = 'not-answered';
   return {
@@ -48,6 +50,7 @@ export function createExamState(test, source, subject, chosenLang) {
     answers: new Array(shuffledQ.length).fill(null), status,
     timeSpent: new Array(shuffledQ.length).fill(0), questionEnteredAt: Date.now(),
     current: 0, violations: 0, lang: chosenLang, startedAt: Date.now(),
+    ...(test.omr ? { omr: test.omr } : {}), // Offline / OMR details (set, booklet no., roll no.)
   };
 }
 
@@ -111,7 +114,7 @@ export function normalizeQuestion(q) {
 }
 
 export function sectionDisplayName(subject) {
-  const map = { math: 'Elementary Mathematics', english: 'English Language', reasoning: 'General Reasoning', gk: 'General Knowledge', full: 'Combined Section', quiz: 'General Knowledge', pyq: 'Previous Year Section' };
+  const map = { math: 'Elementary Mathematics', english: 'English Language', reasoning: 'General Reasoning', gk: 'General Knowledge', full: 'Combined Section', omr: 'Combined Section', quiz: 'General Knowledge', pyq: 'Previous Year Section' };
   return map[subject] || (subject ? subject.charAt(0).toUpperCase() + subject.slice(1) : 'Section');
 }
 
@@ -141,6 +144,7 @@ export function buildSubmission(examState, DB, user) {
     attempt: attemptNo, score, maxScore, correct, wrong, unanswered, accuracy, timeTakenSec, durationSec: st.durationSec,
     date: new Date().toISOString(),
     detail: st.questions.map((q, i) => ({ q, given: st.answers[i], timeSpent: st.timeSpent[i] || 0 })),
+    ...(st.omr ? { omr: st.omr } : {}), // Offline / OMR attempts remember their set, booklet and roll number
   };
 }
 
