@@ -9,8 +9,11 @@ import ExamFlow from '../components/exam/ExamFlow';
 import AttemptSelector from '../components/exam/AttemptSelector';
 import ResultScreen from '../components/exam/ResultScreen';
 import ReviewScreen from '../components/exam/ReviewScreen';
+import OmrPreExam from '../components/exam/OmrPreExam';
+import { loadResumeData } from '../lib/examEngine';
+import { OMR_SUBJECT, buildOmrExamTest } from '../lib/omr';
 
-const SUBJECTS = [['math', 'Math'], ['english', 'English'], ['reasoning', 'Reasoning'], ['gk', 'GK'], ['science', 'Science'], ['full', 'Full Mock']];
+const SUBJECTS = [['math', 'Math'], ['english', 'English'], ['reasoning', 'Reasoning'], ['gk', 'GK'], ['science', 'Science'], ['full', 'Regular Online Full Mock'], ['omr', 'Offline / OMR Full Mock']];
 
 // Mirrors: userAdmin || isFree || (adminUnlocked && userEnrolled).
 function canAccessMock(mock, isEnrolled, admin) {
@@ -51,6 +54,7 @@ export default function MockTest() {
   const [standaloneResult, setStandaloneResult] = useState(null); // submission shown outside ExamFlow
   const [standaloneReview, setStandaloneReview] = useState(false);
   const [deepLinkNotFound, setDeepLinkNotFound] = useState(false);
+  const [omrPending, setOmrPending] = useState(null); // Offline / OMR test waiting in its 5-minute pre-exam window
 
   const tests = useMemo(() => {
     let list = DB.mockTests[subjectTab] || [];
@@ -71,8 +75,20 @@ export default function MockTest() {
     return [...demoTests, ...paidTests];
   }, [DB.mockTests, subjectTab, searchQ, examFilter, subCategory]);
 
+  // Starts the exam for an Offline / OMR test with the student's assigned set (fixed question order).
+  const launchOmrExam = (test, letter) => {
+    setActiveSession({ test: buildOmrExamTest(test, letter, user), source: 'mock', subject: OMR_SUBJECT });
+  };
+
   const startTest = (test, subject) => {
     if (!user) { alert('Please login to start the test (attempts are tracked in your dashboard).'); openModal('login'); return; }
+    if ((subject || subjectTab) === OMR_SUBJECT) {
+      // An interrupted attempt resumes straight away with the same set — no second 5-minute wait.
+      const resume = loadResumeData(user.id);
+      if (resume && resume.testId === test.id && resume.remaining > 0 && resume.omr && resume.omr.set) { launchOmrExam(test, resume.omr.set); return; }
+      setOmrPending(test); // otherwise: the unskippable pre-exam window comes first
+      return;
+    }
     setActiveSession({ test, source: 'mock', subject: subject || subjectTab });
   };
 
@@ -209,6 +225,13 @@ export default function MockTest() {
         }) : <p className="muted text-sm col-span-full">No tests match your search.</p>}
       </div>
 
+      {omrPending && user && (
+        <OmrPreExam
+          test={omrPending} user={user}
+          onCancel={() => setOmrPending(null)}
+          onProceed={(letter) => { const t = omrPending; setOmrPending(null); launchOmrExam(t, letter); }}
+        />
+      )}
       {activeSession && (
         <ExamFlow test={activeSession.test} source={activeSession.source} subject={activeSession.subject} onClose={() => setActiveSession(null)} />
       )}
@@ -219,7 +242,7 @@ export default function MockTest() {
         <ResultScreen
           submission={standaloneResult} autoTimeout={false} autoViolation={false}
           onReview={() => setStandaloneReview(true)}
-          onReattempt={() => { const t = (DB.mockTests[standaloneResult.subject] || []).find((x) => x.id === standaloneResult.testId); setStandaloneResult(null); if (t) setActiveSession({ test: t, source: 'mock', subject: standaloneResult.subject }); }}
+          onReattempt={() => { const t = (DB.mockTests[standaloneResult.subject] || []).find((x) => x.id === standaloneResult.testId); const subj = standaloneResult.subject; setStandaloneResult(null); if (t) { if (subj === OMR_SUBJECT) startTest(t, subj); else setActiveSession({ test: t, source: 'mock', subject: subj }); } }}
           onClose={() => setStandaloneResult(null)}
         />
       )}
@@ -228,4 +251,4 @@ export default function MockTest() {
       )}
     </div>
   );
-}
+      }
