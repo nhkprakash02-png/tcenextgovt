@@ -23,7 +23,12 @@ export function useExam(initialState, userId, onFinish) {
     const id = setInterval(() => {
       setExam((prev) => {
         if (!prev) return prev;
-        const remaining = prev.remaining - 1;
+        // Offline / OMR exams run on the real clock (start time + duration), so the countdown stays
+        // correct even if the app was in the background, the phone slept, or the app was closed and
+        // reopened. Every other exam keeps counting one second at a time, exactly as before.
+        const remaining = prev.omr
+          ? Math.max(0, prev.durationSec - Math.floor((Date.now() - prev.startedAt) / 1000))
+          : prev.remaining - 1;
         const next = { ...prev, remaining };
         persist(next);
         if (remaining <= 0) { clearInterval(id); onFinishRef.current(next, true, false); }
