@@ -9,9 +9,9 @@ import ExamFlow from '../components/exam/ExamFlow';
 import AttemptSelector from '../components/exam/AttemptSelector';
 import ResultScreen from '../components/exam/ResultScreen';
 import ReviewScreen from '../components/exam/ReviewScreen';
-import OmrPreExam from '../components/exam/OmrPreExam';
-import { loadResumeData } from '../lib/examEngine';
-import { OMR_SUBJECT, buildOmrExamTest } from '../lib/omr';
+import { loadResumeData, clearExamProgress } from '../lib/examEngine';
+import { OMR_SUBJECT, OMR_SET_LETTERS, buildOmrExamTest, pickRandomSetLetter } from '../lib/omr';
+import { loadPre, clearPre, findPendingOmrAction } from '../lib/omrSession';
 
 const SUBJECTS = [['math', 'Math'], ['english', 'English'], ['reasoning', 'Reasoning'], ['gk', 'GK'], ['science', 'Science'], ['full', 'Regular Online Full Mock'], ['omr', 'Offline / OMR Full Mock']];
 
@@ -42,7 +42,7 @@ function TestCardSkeleton() {
 }
 
 export default function MockTest() {
-  const { DB, dbLoading, user, hasFullAccess, isEnrolled, openModal, deepLinkTestId, consumeDeepLinkTestId } = useApp();
+  const { DB, dbLoading, user, hasFullAccess, isEnrolled, openModal, deepLinkTestId, consumeDeepLinkTestId, examInProgress } = useApp();
   const [subjectTab, setSubjectTab] = useState('math');
   const [searchQ, setSearchQ] = useState('');
   const [examFilter, setExamFilter] = useState('all');
@@ -54,7 +54,6 @@ export default function MockTest() {
   const [standaloneResult, setStandaloneResult] = useState(null); // submission shown outside ExamFlow
   const [standaloneReview, setStandaloneReview] = useState(false);
   const [deepLinkNotFound, setDeepLinkNotFound] = useState(false);
-  const [omrPending, setOmrPending] = useState(null); // Offline / OMR test waiting in its 5-minute pre-exam window
 
   const tests = useMemo(() => {
     let list = DB.mockTests[subjectTab] || [];
@@ -75,22 +74,68 @@ export default function MockTest() {
     return [...demoTests, ...paidTests];
   }, [DB.mockTests, subjectTab, searchQ, examFilter, subCategory]);
 
-  // Starts the exam for an Offline / OMR test with the student's assigned set (fixed question order).
-  const launchOmrExam = (test, letter) => {
-    setActiveSession({ test: buildOmrExamTest(test, letter, user), source: 'mock', subject: OMR_SUBJECT });
+  // ---- Offline / OMR Full Mock helpers ----
+  const validLetter = (l) => (OMR_SET_LETTERS.includes(l) ? l : 'A');
+
+  // Opens the exam screen for an Offline / OMR test with the given set (fixed question order).
+  //   flow:   'first' (instructions -> 5-minute window -> auto-start) | 'reattempt' (same set, no window)
+  //   action: 'wait' | 'autostart' | 'resume' — jump straight back into a step that was already under way
+  const openOmr = (test, letter, opts) => {
+    const derived = { ...buildOmrExamTest(test, validLetter(letter), user), omrFlow: (opts && opts.flow) || null };
+    setActiveSession({ test: derived, source: 'mock', subject: OMR_SUBJECT, omrAction: (opts && opts.action) || null });
+  };
+
+  // An Offline / OMR exam needs attention: its 5-minute window just ended (start the exam), or an
+  // exam is running but its screen was lost (app reopened / cleared from memory) — continue it.
+  const launchPendingOmr = (pending) => {
+    const t = (DB.mockTests[OMR_SUBJECT] || []).find((x) => x.id === pending.testId);
+    if (!t) { // the test was removed meanwhile — drop the leftovers so nothing keeps retrying
+      if (pending.type === 'resume') clearExamProgress(user.id); else clearPre(user.id, pending.testId);
+      return;
+    }
+    if (pending.type === 'resume') {
+      const data = loadResumeData(user.id);
+      openOmr(t, data && data.omr && data.omr.set, { action: 'resume' });
+    } else {
+      const rec = loadPre(user.id, pending.testId);
+      openOmr(t, rec && rec.setLetter, { action: 'autostart' });
+    }
   };
 
   const startTest = (test, subject) => {
     if (!user) { alert('Please login to start the test (attempts are tracked in your dashboard).'); openModal('login'); return; }
     if ((subject || subjectTab) === OMR_SUBJECT) {
-      // An interrupted attempt resumes straight away with the same set — no second 5-minute wait.
-      const resume = loadResumeData(user.id);
-      if (resume && resume.testId === test.id && resume.remaining > 0 && resume.omr && resume.omr.set) { launchOmrExam(test, resume.omr.set); return; }
-      setOmrPending(test); // otherwise: the unskippable pre-exam window comes first
+      // 1) an exam in progress / a finished 5-minute window for THIS test: carry on with it
+      const pending = findPendingOmrAction(user.id);
+      if (pending && pending.testId === test.id) { launchPendingOmr(pending); return; }
+      // 2) the 5-minute window for this test is still counting down: show it again (same timer)
+      const rec = loadPre(user.id, test.id);
+      if (rec && !rec.proceeded) { openOmr(test, rec.setLetter, { action: 'wait' }); return; }
+      // 3) already attempted before: re-attempt with the SAME booklet set as the first attempt, no window
+      const earlier = DB.submissions
+        .filter((x) => x.testId === test.id && x.studentId === user.id)
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      if (earlier.length) { openOmr(test, earlier[0].omr && earlier[0].omr.set, { flow: 'reattempt' }); return; }
+      // 4) first attempt: a random set (A–D) is assigned; instructions come first, then the window
+      openOmr(test, pickRandomSetLetter(), { flow: 'first' });
       return;
     }
     setActiveSession({ test, source: 'mock', subject: subject || subjectTab });
   };
+
+  // Keeps watching (while this page is open) for an Offline / OMR exam that must start or continue.
+  useEffect(() => {
+    if (!user || dbLoading) return undefined;
+    const check = () => {
+      if (activeSession || examInProgress) return;
+      const pending = findPendingOmrAction(user.id);
+      if (pending) launchPendingOmr(pending);
+    };
+    check();
+    const id = setInterval(check, 1000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user && user.id, dbLoading, activeSession, examInProgress, DB.mockTests]);
 
   // Handles a /test/:id deep link: once the real data has loaded, find that test across every
   // subject, switch to its subject tab so it's visible, and — if the visitor is logged in and
@@ -225,15 +270,8 @@ export default function MockTest() {
         }) : <p className="muted text-sm col-span-full">No tests match your search.</p>}
       </div>
 
-      {omrPending && user && (
-        <OmrPreExam
-          test={omrPending} user={user}
-          onCancel={() => setOmrPending(null)}
-          onProceed={(letter) => { const t = omrPending; setOmrPending(null); launchOmrExam(t, letter); }}
-        />
-      )}
       {activeSession && (
-        <ExamFlow test={activeSession.test} source={activeSession.source} subject={activeSession.subject} onClose={() => setActiveSession(null)} />
+        <ExamFlow test={activeSession.test} source={activeSession.source} subject={activeSession.subject} omrAction={activeSession.omrAction} onClose={() => setActiveSession(null)} />
       )}
       {attemptPicker && (
         <AttemptSelector submissions={attemptPicker} onClose={() => setAttemptPicker(null)} onPick={(s) => { setAttemptPicker(null); setStandaloneResult(s); }} />
@@ -251,4 +289,4 @@ export default function MockTest() {
       )}
     </div>
   );
-      }
+          }
