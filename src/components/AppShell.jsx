@@ -22,6 +22,7 @@ import Mentors from './Mentors';
 import BackButton from './BackButton';
 import AuthModal, { GoogleRegisterModal } from './AuthModal';
 import EnrollModal from './EnrollModal';
+import OmrAutoStart from './OmrAutoStart';
 import Home from '../views/Home';
 import MockTest from '../views/MockTest';
 import Quiz from '../views/Quiz';
@@ -62,6 +63,7 @@ export default function AppShell({ children }) {
 
   return (
     <>
+      <OmrAutoStart />
       <Navbar />
       <Ticker />
       {isHome && <HeroCarousel />}
