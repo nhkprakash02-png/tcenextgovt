@@ -1,14 +1,14 @@
 // Offline / OMR Full Mock helpers — used by BOTH the student website (the exam) and the admin
 // panel (the printable PDF booklets).
 //
-// IMPORTANT: this file must stay IDENTICAL in both projects. The five sets are built by a
-// seeded (repeatable) shuffle, so the same test always produces exactly the same Set A–E in both
+// IMPORTANT: this file must stay IDENTICAL in both projects. The four sets are built by a
+// seeded (repeatable) shuffle, so the same test always produces exactly the same Set A–D in both
 // places. That is what guarantees the paper booklet a student holds matches the questions and
 // options shown on the website.
 import { normalizeQuestion } from './examEngine';
 
 export const OMR_SUBJECT = 'omr';
-export const OMR_SET_LETTERS = ['A', 'B', 'C', 'D', 'E'];
+export const OMR_SET_LETTERS = ['A', 'B', 'C', 'D']; // 4 sets only (Set E was removed)
 export const OMR_PRE_EXAM_SECONDS = 300; // the unskippable 5-minute pre-exam window
 export const DEFAULT_ROLL_DIGITS = 6;
 
@@ -62,7 +62,7 @@ export function bookletNumber(testId, letter) {
   return String(result);
 }
 
-// Builds one set (A–E) of a test. Set A is the master (questions exactly as uploaded). Sets B–E
+// Builds one set (A–D) of a test. Set A is the master (questions exactly as uploaded). Sets B–D
 // re-order the questions and shuffle each question's options; the correct answer moves with its
 // option, so every set is marked correctly.
 export function buildOmrSet(test, letter) {
@@ -116,4 +116,4 @@ export function buildOmrExamTest(test, letter, user) {
     fixedOrder: true,
     omr: { set: set.letter, bookletNo: set.bookletNo, roll: rollNumberFromPhone(user && user.phone, digits), rollDigits: digits },
   };
-                       }
+}
