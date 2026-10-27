@@ -62,21 +62,22 @@ export function bookletNumber(testId, letter) {
   return String(result);
 }
 
-// Builds one set (A–D) of a test. Set A is the master (questions exactly as uploaded). Sets B–D
-// re-order the questions and shuffle each question's options; the correct answer moves with its
-// option, so every set is marked correctly.
+// Builds one set (A–D) of a test. EVERY set — Set A included — is its own independent shuffle: the
+// questions are re-ordered and each question's options are shuffled, so no set follows the order the
+// questions were uploaded in. The correct answer moves with its option, so every set is marked
+// correctly.
 export function buildOmrSet(test, letter) {
   const L = OMR_SET_LETTERS.includes(letter) ? letter : 'A';
   const tid = String((test && test.id) || 'test');
   const base = ((test && test.questions) || []).map(normalizeQuestion);
   let order = base.map((_, i) => i);
-  if (L !== 'A' && base.length > 1) {
+  if (base.length > 1) {
     order = seededShuffle(order, rngFor(`${tid}|${L}|order`));
-    if (order.every((v, i) => v === i)) order = order.slice(1).concat(order[0]); // never identical to Set A
+    if (order.every((v, i) => v === i)) order = order.slice(1).concat(order[0]); // never the uploaded order
   }
   const questions = order.map((idx) => {
     const q = base[idx];
-    if (L === 'A' || q.options.length < 2) return q;
+    if (q.options.length < 2) return q;
     if (q.options.some((o) => POSITION_DEPENDENT.test(o.textEn || ''))) return q;
     const perm = seededShuffle(q.options.map((_, i) => i), rngFor(`${tid}|${L}|${q.id ?? idx}`));
     const options = perm.map((orig, pos) => ({ key: String.fromCharCode(65 + pos), textEn: q.options[orig].textEn, textBn: q.options[orig].textBn || '' }));
