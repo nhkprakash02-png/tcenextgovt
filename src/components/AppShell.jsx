@@ -99,4 +99,4 @@ export default function AppShell({ children }) {
       {modal?.type === 'enroll' && <EnrollModal {...modal.props} />}
     </>
   );
-}
+              }
