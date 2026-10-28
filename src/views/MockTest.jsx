@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, Repeat, BarChart2, Lock, Play, MoreVertical, Link2, MessageCircle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { SUBCATEGORIES } from '../lib/utils';
@@ -10,7 +10,8 @@ import AttemptSelector from '../components/exam/AttemptSelector';
 import ResultScreen from '../components/exam/ResultScreen';
 import ReviewScreen from '../components/exam/ReviewScreen';
 import { loadResumeData, clearExamProgress } from '../lib/examEngine';
-import { OMR_SUBJECT, OMR_SET_LETTERS, buildOmrExamTest, pickRandomSetLetter } from '../lib/omr';
+import { OMR_SUBJECT, OMR_SET_LETTERS, buildOmrExamTest } from '../lib/omr';
+import { assignOmrSet } from '../lib/omrAssign';
 import { loadPre, clearPre, findPendingOmrAction } from '../lib/omrSession';
 
 const SUBJECTS = [['math', 'Math'], ['english', 'English'], ['reasoning', 'Reasoning'], ['gk', 'GK'], ['science', 'Science'], ['full', 'Regular Online Full Mock'], ['omr', 'Offline / OMR Full Mock']];
@@ -54,6 +55,7 @@ export default function MockTest() {
   const [standaloneResult, setStandaloneResult] = useState(null); // submission shown outside ExamFlow
   const [standaloneReview, setStandaloneReview] = useState(false);
   const [deepLinkNotFound, setDeepLinkNotFound] = useState(false);
+  const assigningRef = useRef(false); // true while the next set in the A→B→C→D rotation is being taken
 
   const tests = useMemo(() => {
     let list = DB.mockTests[subjectTab] || [];
@@ -102,7 +104,7 @@ export default function MockTest() {
     }
   };
 
-  const startTest = (test, subject) => {
+  const startTest = async (test, subject) => {
     if (!user) { alert('Please login to start the test (attempts are tracked in your dashboard).'); openModal('login'); return; }
     if ((subject || subjectTab) === OMR_SUBJECT) {
       // 1) an exam in progress / a finished 5-minute window for THIS test: carry on with it
@@ -116,8 +118,20 @@ export default function MockTest() {
         .filter((x) => x.testId === test.id && x.studentId === user.id)
         .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
       if (earlier.length) { openOmr(test, earlier[0].omr && earlier[0].omr.set, { flow: 'reattempt' }); return; }
-      // 4) first attempt: a random set (A–D) is assigned; instructions come first, then the window
-      openOmr(test, pickRandomSetLetter(), { flow: 'first' });
+      // 4) first attempt: the student takes the NEXT set in the strict A → B → C → D → A… rotation
+      //    (it restarts from Set A every time the admin unlocks the test); instructions come first,
+      //    then the 5-minute window
+      if (assigningRef.current) return;
+      assigningRef.current = true;
+      try {
+        const letter = await assignOmrSet(test, user.id);
+        openOmr(test, letter, { flow: 'first' });
+      } catch (e) {
+        console.error('Could not assign an Offline / OMR set', e);
+        alert('Could not assign your question-paper set. Please check your internet connection and try again.');
+      } finally {
+        assigningRef.current = false;
+      }
       return;
     }
     setActiveSession({ test, source: 'mock', subject: subject || subjectTab });
@@ -289,5 +303,4 @@ export default function MockTest() {
       )}
     </div>
   );
-                                                                                 }
-                
+}
