@@ -126,12 +126,33 @@ export function seedDB() {
     ],
     mentors: [
       { id: uid('mn'), name: 'Tanujoy Mallick', subject: 'General Studies', phone: '919749587349', photo: 'tanujoy.png' },
-      { id: uid('mn'), name: 'Prakash Sarkar', subject: 'Mathematics', phone: '917384644030', photo: 'prakash.png' },
+      { id: uid('mn'), name: 'Prakash Sarkar', subject: 'Mathematics and Reasoning', phone: '917384644030', photo: 'prakash.png' },
       { id: uid('mn'), name: 'Maharup Tarafder', subject: 'General Science, Static GK & Current Affairs', phone: '918327416813', photo: 'maharup.png' },
-      { id: uid('mn'), name: 'Pranab Sadhukhan', subject: 'Reasoning & English', phone: '917407879095', photo: 'pranab.png' },
+      { id: uid('mn'), name: 'Santu Sarkar', subject: 'English', phone: '919609383892', photo: 'santu.png' },
     ],
     urgentNotices: [],
   };
+}
+
+// Faculty update: Prakash Sarkar now teaches "Mathematics and Reasoning", and Pranab Sadhukhan has
+// been replaced by Santu Sarkar (English). The mentors list also lives in the live database, so this
+// is applied every time mentors are loaded (initial load AND live sync). It is safe to run repeatedly
+// and keeps each mentor's existing id.
+export function applyMentorUpdates(mentors) {
+  if (!Array.isArray(mentors)) return mentors;
+  const updated = mentors.map((m) => {
+    if (!m || typeof m.name !== 'string') return m;
+    if (m.name === 'Prakash Sarkar') return { ...m, subject: 'Mathematics and Reasoning' };
+    if (/pranab/i.test(m.name)) return { ...m, name: 'Santu Sarkar', subject: 'English', phone: '919609383892', photo: 'santu.png' };
+    return m;
+  });
+  const seen = new Set();
+  return updated.filter((m) => {
+    if (!m || typeof m.name !== 'string') return true;
+    if (seen.has(m.name)) return false;
+    seen.add(m.name);
+    return true;
+  });
 }
 
 export function normalizeDB(db) {
@@ -162,7 +183,8 @@ export function normalizeDB(db) {
     if (!db.examCategories.includes('Railway (RRB)')) db.examCategories.push('Railway (RRB)');
   }
   (db.mentors || []).forEach((m) => { if (m.name === 'Tanujoy Mallick') { m.subject = 'General Studies'; delete m.nameBn; } });
-  const mentorPhotoByName = { 'Tanujoy Mallick': 'tanujoy.png', 'Prakash Sarkar': 'prakash.png', 'Maharup Tarafder': 'maharup.png', 'Pranab Sadhukhan': 'pranab.png' };
+  db.mentors = applyMentorUpdates(db.mentors);
+  const mentorPhotoByName = { 'Tanujoy Mallick': 'tanujoy.png', 'Prakash Sarkar': 'prakash.png', 'Maharup Tarafder': 'maharup.png', 'Santu Sarkar': 'santu.png' };
   (db.mentors || []).forEach((m) => { if (!m.photo && mentorPhotoByName[m.name]) m.photo = mentorPhotoByName[m.name]; });
   return db;
 }
