@@ -10,7 +10,7 @@ import {
   collection, doc, getDoc, getDocs, setDoc, deleteDoc, writeBatch, onSnapshot,
 } from 'firebase/firestore';
 import { fbDB, DEMO_MODE } from '../firebase';
-import { seedDB, normalizeDB } from './seedData';
+import { seedDB, normalizeDB, applyMentorUpdates } from './seedData';
 
 export const FS_COLLECTION = 'tce_app_data';
 export const DB_KEYS = [
@@ -232,7 +232,8 @@ export function attachDbRealtimeListeners(getDB, onChange) {
     if (!snap.exists()) return;
     try {
       const currentValue = getDB()[key];
-      const incoming = await readKeyValue(key, currentValue);
+      let incoming = await readKeyValue(key, currentValue);
+      if (key === 'mentors') incoming = applyMentorUpdates(incoming);
       const changed = JSON.stringify(currentValue) !== JSON.stringify(incoming);
       if (changed) onChange(key, incoming);
     } catch (e) { console.warn('Live sync reassembly failed for ' + key, e); }
