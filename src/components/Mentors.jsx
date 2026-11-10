@@ -6,7 +6,7 @@ import { useApp } from '../context/AppContext';
 
 const MENTOR_PHOTO_OVERRIDE = {
   'Tanujoy Mallick': 'tanujoy.png', 'Prakash Sarkar': 'prakash.png',
-  'Maharup Tarafder': 'maharup.png', 'Pranab Sadhukhan': 'pranab.png',
+  'Maharup Tarafder': 'maharup.png', 'Santu Sarkar': 'santu.png',
 };
 
 export default function Mentors() {
